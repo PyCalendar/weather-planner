@@ -1,0 +1,80 @@
+[build-system]
+requires = ["hatchling>=1.27", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "weather-planner"
+dynamic = ["version"]
+description = "Weather alerts and planning from free forecast data, delivered through your calendar"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "GPL-3.0-or-later OR Apache-2.0"
+license-files = ["COPYING.*"]
+authors = [{ name = "Tobias Brox", email = "tobias@redpill-linpro.com" }]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Intended Audience :: End Users/Desktop",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Scientific/Engineering :: Atmospheric Science",
+  "Typing :: Typed",
+]
+dependencies = [
+  "niquests>=3.0",
+  "PyYAML>=6.0",
+  "calendaring",
+  "calendaring-config",
+]
+
+[project.optional-dependencies]
+# ruff and mypy are pinned exactly; keep ruff in step with .pre-commit-config.yaml
+dev = [
+  "pytest>=8.0",
+  "ruff==0.17.0",
+  "mypy==2.4.0",
+  "types-PyYAML",
+  "pre-commit>=4.0",
+]
+
+[project.scripts]
+weather-planner = "weather_planner.cli:main"
+
+[project.urls]
+Repository = "https://github.com/pycalendar/weather-planner"
+Issues = "https://github.com/pycalendar/weather-planner/issues"
+
+[tool.hatch.version]
+source = "vcs"
+# Only v<digit>* tags are releases.
+raw-options = { scm = { git = { describe_command = "git describe --dirty --tags --long --abbrev=40 --match v[0-9]*" } } }
+
+[tool.hatch.build.hooks.vcs]
+version-file = "src/weather_planner/_version.py"
+
+[tool.hatch.build.targets.sdist]
+exclude = ["/.github", "/.claude", "tmp-*", "*~", "*.bak"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "PT"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["weather_planner"]
+
+[tool.mypy]
+strict = true
+python_version = "3.10"
+files = ["src", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+filterwarnings = ["error"]

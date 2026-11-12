@@ -1,0 +1,37 @@
+repos:
+  # === PRE-COMMIT STAGE (quick checks on every commit) ===
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.0  # same version as the ruff pin in pyproject.toml
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+
+  # === PRE-PUSH STAGE (full test suite before pushing) ===
+
+  - repo: local
+    hooks:
+      - id: pytest
+        name: pytest
+        entry: pytest
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+
+  # === COMMIT-MSG: Enforce Conventional Commits ===
+
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v4.4.0
+    hooks:
+      - id: conventional-pre-commit
+        stages: [commit-msg]
