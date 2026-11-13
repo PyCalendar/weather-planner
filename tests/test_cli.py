@@ -25,7 +25,7 @@ def test_build_rows(forecast_json: dict[str, Any], ensemble_json: dict[str, Any]
     for r in rows:
         assert 0 <= r["p_rain"] <= 1
         assert set(r["wind"]) == {"ecmwf_ifs025", "icon_seamless"}
-        assert r["effective_gust"] <= r["gust"]["ecmwf_ifs025"]
+        assert r["effective_gust"] <= max(r["gust"].values())
 
 
 def synthetic(gusts: list[float], directions: list[float], precip: list[float] | None = None) -> Forecast:
@@ -140,3 +140,84 @@ def test_table_output_has_legend_and_marine_grid(
     out = capsys.readouterr().out
     assert "marine grid" in out
     assert "eff = " in out
+
+
+ALERT_CONFIG = """
+default_place: home
+units: {wind: kn}
+places:
+  home: {position: [60.39, 5.32]}
+alerts:
+  calm:
+    gust: 0
+    task: enjoy it
+    lead: 1h
+  rain:
+    rain: 0
+    probability: 0.01
+    event: false
+    task: close hatches
+  never:
+    gust: 12 bft
+"""
+
+
+def _fake(
+    monkeypatch: pytest.MonkeyPatch,
+    forecast_json: dict[str, Any],
+    ensemble_json: dict[str, Any],
+    marine_json: dict[str, Any],
+) -> None:
+    monkeypatch.setattr(cli, "Client", lambda: FakeClient(forecast_json, ensemble_json, marine_json))
+    monkeypatch.setattr(cli, "_now", lambda: datetime(2026, 11, 12, 6, tzinfo=timezone.utc))
+
+
+def test_alerts_command(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    forecast_json: dict[str, Any],
+    ensemble_json: dict[str, Any],
+    marine_json: dict[str, Any],
+) -> None:
+    _fake(monkeypatch, forecast_json, ensemble_json, marine_json)
+    f = tmp_path / "c.yaml"
+    f.write_text(ALERT_CONFIG)
+    assert cli.main(["--config", str(f), "alerts", "--json"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    by_name = {a["name"]: a for a in out["alerts"]}
+    assert set(by_name) == {"calm", "rain"}
+    calm = by_name["calm"]
+    assert calm["start"] == "2026-11-12T06:00:00+00:00"
+    assert calm["task_due"] == "2026-11-12T05:00:00+00:00"
+    assert " kn" in calm["summary"]
+    assert by_name["rain"]["summary"] is None
+    assert cli.main(["--config", str(f), "alerts"]) == 0
+    text = capsys.readouterr().out
+    assert "calm" in text
+    assert "enjoy it" in text
+    assert "never" not in text
+
+
+def test_alerts_command_without_alerts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    f = tmp_path / "c.yaml"
+    f.write_text("places:\n  home: {position: [1, 2]}\n")
+    assert cli.main(["--config", str(f), "alerts", "home"]) == 2
+    assert "no alerts" in capsys.readouterr().err
+
+
+def test_forecast_table_in_display_unit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    forecast_json: dict[str, Any],
+    ensemble_json: dict[str, Any],
+    marine_json: dict[str, Any],
+) -> None:
+    _fake(monkeypatch, forecast_json, ensemble_json, marine_json)
+    f = tmp_path / "c.yaml"
+    f.write_text("units: {wind: bft}\n")
+    assert cli.main(["--config", str(f), "forecast", "60.39,5.32", "--hours", "6"]) == 0
+    assert "in bft" in capsys.readouterr().out

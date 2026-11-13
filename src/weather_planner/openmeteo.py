@@ -86,6 +86,13 @@ class Marine:
     values: dict[str, Values] = field(default_factory=dict)
 
 
+def value_at(series: Sequence[float | None] | None, i: int) -> float | None:
+    """The *i*-th value of a series that may be missing or short."""
+    if series is None or i >= len(series):
+        return None
+    return series[i]
+
+
 def window_indices(times: Sequence[datetime], start: datetime, end: datetime, variable: str) -> list[int]:
     """Indices of the values that describe the period [start, end).
 
