@@ -127,7 +127,10 @@ class Alert:
             else:
                 text = f"CAPE to {value:.0f} J/kg"
             parts.append(text)
-        return f"{self.name}: {', '.join(parts)}"
+        text = ", ".join(parts)
+        if text.lower().startswith(f"{self.name.lower()} "):
+            return text  # "gusts: gusts to ..." says it twice
+        return f"{self.name}: {text}"
 
     def to_json(self) -> dict[str, Any]:
         return {

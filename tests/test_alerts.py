@@ -140,6 +140,21 @@ def test_summary() -> None:
     assert alert.describe("bft") == "test: gusts to 7 bft from S"
 
 
+@pytest.mark.parametrize(
+    ("name", "conditions", "summary"),
+    [
+        ("gusts", {"gust": 10}, "gusts to 31 kn from S"),
+        ("CAPE", {"cape": 100}, "CAPE to 500 J/kg"),
+        ("cape-high", {"cape": 100}, "cape-high: CAPE to 500 J/kg"),
+        ("gale", {"gust": 10}, "gale: gusts to 31 kn from S"),
+    ],
+)
+def test_summary_without_redundant_name(name: str, conditions: dict[str, Any], summary: str) -> None:
+    fc = forecast(a={"wind_gusts_10m": 16.0, "wind_direction_10m": 180.0, "cape": 500.0})
+    [alert] = evaluate(parse_alert(name, conditions, horizon=timedelta(hours=48)), OPEN, fc, None, T0, "kn")
+    assert alert.summary == summary
+
+
 def test_direction_only_counts_models_with_wind_from_the_sector() -> None:
     fc = forecast(
         a={"wind_speed_10m": 9.0, "wind_direction_10m": 0.0},  # strong, but northerly
