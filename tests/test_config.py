@@ -121,6 +121,8 @@ def test_defaults_without_alerts(tmp_path: Path) -> None:
         ("{gust: 20 mph}", "speed"),
         ("{gust: 20, task: [a, b]}", "task"),
         ("[gust]", "mapping"),
+        ("{rain: 1, direction: 135-225}", "direction"),
+        ("{wind: 5, direction: south}", "sector"),
     ],
 )
 def test_bad_alert_rejected(tmp_path: Path, alert: str, message: str) -> None:
@@ -141,4 +143,34 @@ def test_unknown_top_level_key_rejected(tmp_path: Path) -> None:
     f = tmp_path / "c.yaml"
     f.write_text("alert: {}\n")
     with pytest.raises(ValueError, match="alert"):
+        load_config(f)
+
+
+def test_direction_limits_wind_alerts_to_a_sector(tmp_path: Path) -> None:
+    f = tmp_path / "c.yaml"
+    f.write_text("alerts:\n  southerly: {wind: 5 kn, direction: 135-225}\n")
+    rule = load_config(f).alerts["southerly"]
+    assert rule.direction is not None
+    assert rule.direction.contains(180)
+    assert not rule.direction.contains(90)
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ("units: kn\n", "units"),
+        ("places: [a, b]\n", "places"),
+        ("- a\n", "mapping"),
+        ("places:\n  a/b: {position: [1, 2]}\n", "/"),
+        ("alerts:\n  a/b: {gust: 20}\n", "/"),
+        ("alerts:\n  a: {gust: 20, task: true}\n", "task"),
+        ("alerts:\n  a: {gust: 20, event: '', task: x}\n", "event"),
+        ("alerts:\n  a: {rain: 1, probability: true}\n", "probability"),
+        ("alerts:\n  a: {rain: 1, probability: abc}\n", "probability"),
+    ],
+)
+def test_malformed_config_rejected(tmp_path: Path, text: str, message: str) -> None:
+    f = tmp_path / "c.yaml"
+    f.write_text(text)
+    with pytest.raises(ValueError, match=message):
         load_config(f)

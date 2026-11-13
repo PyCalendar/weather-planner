@@ -15,7 +15,7 @@ from typing import Any
 
 import yaml
 
-from .places import Place, parse_place
+from .places import Place, Sector, parse_place
 from .units import check_wind_unit, parse_amount, parse_duration, parse_speed
 
 MAX_HORIZON = timedelta(days=16)  # what Open-Meteo forecasts
@@ -32,7 +32,9 @@ CONDITIONS: dict[str, Callable[[Any], float]] = {
     "temperature_above": lambda v: parse_amount(v, "°C"),
     "cape": lambda v: parse_amount(v, "J/kg"),
 }
-_SETTINGS = {"probability", "worst", "window", "horizon", "lead", "event", "task"}
+_SETTINGS = {"probability", "worst", "window", "horizon", "lead", "event", "task", "direction"}
+# Conditions a direction applies to
+WIND_CONDITIONS = ("effective_gust", "gust", "wind")
 _TOP_LEVEL = {"calendar", "default_place", "places", "units", "horizon", "alerts"}
 
 
@@ -58,9 +60,11 @@ class AlertRule:
     lead: timedelta = timedelta(0)  # the task is due this long before the alert starts
     event: bool | str = True  # a string is the event's summary
     task: str | None = None  # the task's summary; None for no task
+    direction: Sector | None = None  # only wind from here counts
 
 
 def parse_alert(name: str, data: Any, horizon: timedelta = DEFAULT_HORIZON) -> AlertRule:
+    _check_name("alert", name)
     if not isinstance(data, dict):
         raise ValueError(f"alert {name}: must be a mapping of conditions and settings")
     unknown = set(data) - set(CONDITIONS) - _SETTINGS
@@ -81,9 +85,19 @@ def parse_alert(name: str, data: Any, horizon: timedelta = DEFAULT_HORIZON) -> A
     if "probability" in data:
         if "rain" not in conditions:
             raise ValueError(f"alert {name}: probability only applies to rain")
-        rule.probability = float(data["probability"])
+        p = data["probability"]
+        if isinstance(p, bool) or not isinstance(p, (int, float)):
+            raise ValueError(f"alert {name}: probability must be a number above 0 and at most 1")
+        rule.probability = float(p)
         if not 0 < rule.probability <= 1:
             raise ValueError(f"alert {name}: probability must be above 0 and at most 1")
+    if "direction" in data:
+        if not any(c in conditions for c in WIND_CONDITIONS):
+            raise ValueError(f"alert {name}: direction only applies to {', '.join(WIND_CONDITIONS)}")
+        try:
+            rule.direction = Sector.parse(str(data["direction"]))
+        except ValueError as e:
+            raise ValueError(f"alert {name}: direction: {e}") from None
     if "worst" in data:
         worst = data["worst"]
         if isinstance(worst, bool) or not isinstance(worst, int) or worst < 1:
@@ -99,13 +113,14 @@ def parse_alert(name: str, data: Any, horizon: timedelta = DEFAULT_HORIZON) -> A
         raise ValueError(f"alert {name}: window must be whole hours, 1h-24h")
     if not timedelta(0) < rule.horizon <= MAX_HORIZON:
         raise ValueError(f"alert {name}: horizon must be above 0 and at most {MAX_HORIZON.days}d")
-    for key in ("event", "task"):
-        value = data.get(key)
-        if value is not None and not isinstance(value, (str, bool)):
-            raise ValueError(f"alert {name}: {key} must be a summary text or true/false")
-    rule.event = data.get("event", True)
+    event = data.get("event", True)
+    if not isinstance(event, (str, bool)) or event == "":
+        raise ValueError(f"alert {name}: event must be a summary text or true/false")
     task = data.get("task")
-    rule.task = task if isinstance(task, str) else None
+    if task is not None and (not isinstance(task, str) or task == ""):
+        raise ValueError(f"alert {name}: task must be a summary text")
+    rule.event = event
+    rule.task = task
     if not rule.event and rule.task is None:
         raise ValueError(f"alert {name}: neither an event nor a task; it would never show up")
     return rule
@@ -130,21 +145,39 @@ class Config:
         return parse_place(spec, {"position": [lat, lon]})  # range-checked there
 
 
+def _check_name(what: str, name: Any) -> None:
+    # "/" separates the place from the alert in the calendar items' key
+    if not isinstance(name, str) or not name or "/" in name:
+        raise ValueError(f"{what} name {name!r} must be a non-empty text without '/'")
+
+
+def _mapping(raw: dict[str, Any], key: str) -> dict[Any, Any]:
+    value = raw.get(key) or {}
+    if not isinstance(value, dict):
+        raise ValueError(f"{key} must be a mapping")
+    return value
+
+
 def load_config(path: str | Path | None = None) -> Config:
     path = Path(path) if path else default_path()
     if not path.exists():
         return Config()
-    raw: dict[str, Any] = yaml.safe_load(path.read_text()) or {}
+    raw: Any = yaml.safe_load(path.read_text()) or {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"{path}: must be a mapping of settings")
     unknown = set(raw) - _TOP_LEVEL
     if unknown:
         raise ValueError(f"{path}: unknown key(s) {', '.join(sorted(map(str, unknown)))}")
-    places = {name: parse_place(name, data or {}) for name, data in (raw.get("places") or {}).items()}
+    places_raw = _mapping(raw, "places")
+    for name in places_raw:
+        _check_name("place", name)
+    places = {name: parse_place(name, data or {}) for name, data in places_raw.items()}
     default = raw.get("default_place")
     if default is not None and default not in places:
         raise ValueError(f"default_place {default!r} is not among the configured places")
-    wind_unit = check_wind_unit((raw.get("units") or {}).get("wind", "m/s"))
+    wind_unit = check_wind_unit(_mapping(raw, "units").get("wind", "m/s"))
     horizon = parse_duration(raw["horizon"]) if "horizon" in raw else DEFAULT_HORIZON
-    alerts = {name: parse_alert(name, data, horizon) for name, data in (raw.get("alerts") or {}).items()}
+    alerts = {name: parse_alert(name, data, horizon) for name, data in _mapping(raw, "alerts").items()}
     return Config(
         places=places,
         default_place=default,

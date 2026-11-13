@@ -138,3 +138,35 @@ def test_summary() -> None:
     [alert] = evaluate(rule(gust=10, event=False, task="x"), OPEN, fc, None, T0)
     assert alert.summary is None
     assert alert.describe("bft") == "test: gusts to 7 bft from S"
+
+
+def test_direction_only_counts_models_with_wind_from_the_sector() -> None:
+    fc = forecast(
+        a={"wind_speed_10m": 9.0, "wind_direction_10m": 0.0},  # strong, but northerly
+        b={"wind_speed_10m": 4.0, "wind_direction_10m": 190.0},  # southerly
+    )
+    [alert] = evaluate(rule(wind=3, direction="135-225"), OPEN, fc, None, T0)
+    assert alert.values["wind"] == pytest.approx(4)
+    assert alert.direction == 190
+    assert evaluate(rule(wind=5, direction="135-225"), OPEN, fc, None, T0) == []
+    # no model from the sector at all: no alert
+    assert evaluate(rule(wind=1, direction="90-100"), OPEN, fc, None, T0) == []
+
+
+def test_direction_with_worst_ignores_a_lone_in_sector_outlier() -> None:
+    fc = forecast(
+        a={"wind_speed_10m": 8.0, "wind_direction_10m": 0.0},  # the outlier, from the north
+        b={"wind_speed_10m": 6.0, "wind_direction_10m": 180.0},
+        c={"wind_speed_10m": 6.0, "wind_direction_10m": 190.0},
+    )
+    assert evaluate(rule(wind=5, direction="315-45"), OPEN, fc, None, T0)
+    assert evaluate(rule(wind=5, direction="315-45", worst=2), OPEN, fc, None, T0) == []
+
+
+@pytest.mark.parametrize("minutes", [0, 50, 110, 170])
+def test_windows_sit_on_a_fixed_grid_whatever_the_time_of_the_run(minutes: int) -> None:
+    gusts = [0.0] * 6 + [30.0] * 4 + [0.0] * 14  # stamped 06-09: the hours 05:00-09:00
+    fc = forecast(a={"wind_gusts_10m": gusts})
+    now = T0 + timedelta(hours=3, minutes=minutes)  # all within the 03-06 window
+    [alert] = evaluate(rule(gust=20, window="3h"), OPEN, fc, None, now)
+    assert (alert.start, alert.end) == (T0 + timedelta(hours=3), T0 + timedelta(hours=9))

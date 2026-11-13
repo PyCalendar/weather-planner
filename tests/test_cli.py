@@ -221,3 +221,39 @@ def test_forecast_table_in_display_unit(
     f.write_text("units: {wind: bft}\n")
     assert cli.main(["--config", str(f), "forecast", "60.39,5.32", "--hours", "6"]) == 0
     assert "in bft" in capsys.readouterr().out
+
+
+def test_alerts_write_puts_them_in_the_calendar(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    forecast_json: dict[str, Any],
+    ensemble_json: dict[str, Any],
+    marine_json: dict[str, Any],
+) -> None:
+    from contextlib import contextmanager
+
+    from calendaring import Backend, Component, Workspace
+
+    _fake(monkeypatch, forecast_json, ensemble_json, marine_json)
+    backend = Backend.open(str(tmp_path))
+    Workspace([backend])
+    collection = backend.create_collection("w", components={Component.EVENT, Component.TASK})
+    sections: list[str | None] = []
+
+    @contextmanager
+    def fake_open(section: str | None = None) -> Any:
+        sections.append(section)
+        yield collection
+
+    monkeypatch.setattr(cli, "open_collection", fake_open)
+    f = tmp_path / "c.yaml"
+    f.write_text(ALERT_CONFIG)
+    assert cli.main(["--config", str(f), "alerts", "--write"]) == 0
+    out = capsys.readouterr().out
+    assert "created" in out
+    assert sections == [None]  # no calendar configured: the default section
+    assert len(collection.events()) == 1
+    assert {str(t.component["SUMMARY"]) for t in collection.tasks()} == {"enjoy it", "close hatches"}
+    assert cli.main(["--config", str(f), "alerts", "--write"]) == 0
+    assert "created" not in capsys.readouterr().out

@@ -12,12 +12,12 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from .config import AlertRule
+from .config import WIND_CONDITIONS, AlertRule
 from .openmeteo import Ensemble, Forecast, value_at, window_indices
-from .places import Place, compass_name
+from .places import Place, Sector, compass_name
 from .probability import probability_exceeds
 from .units import format_speed
 
@@ -30,8 +30,7 @@ SERIES = {
     "temperature_above": ("temperature_2m", True),
     "cape": ("cape", True),
 }
-# The direction reported for an alert comes from the first of these it has
-WIND_CONDITIONS = ("effective_gust", "gust", "wind")
+# The direction reported for an alert comes from the first of WIND_CONDITIONS it has
 DIRECTION = "wind_direction_10m"
 
 
@@ -46,25 +45,33 @@ def nth_worst(values: Iterable[float | None], n: int, highest: bool = True) -> f
     return _nth(present, n) if present else None
 
 
-def hourly(place: Place, fc: Forecast, condition: str, i: int, n: int) -> tuple[float | None, float | None]:
+def hourly(
+    place: Place, fc: Forecast, condition: str, i: int, n: int, sector: Sector | None = None
+) -> tuple[float | None, float | None]:
     """The *n*-th worst model's value for *condition* at index *i*, and its wind direction.
 
     The effective gust combines the *n*-th worst gust with the *n*-th least
     sheltered direction, even when they come from different models: the
     models disagree on both, and either can make the place uncomfortable.
+
+    With a *sector*, a model whose wind comes from outside it counts as
+    calm for a wind condition: it still counts towards *n*, so ``worst: 2``
+    still ignores a lone model that has the wind from the sector.
     """
     variable, highest = SERIES[condition]
     models = list(fc.models.values())
+    pairs = [(value_at(m.get(variable), i), value_at(m.get(DIRECTION), i)) for m in models]
+    if sector is not None and condition in WIND_CONDITIONS:
+        pairs = [(v if d is not None and sector.contains(d) else 0.0, d) for v, d in pairs]
     if condition == "effective_gust":
-        gust = nth_worst((value_at(m.get(variable), i) for m in models), n)
+        gust = nth_worst((v for v, _ in pairs), n)
         directions = sorted(
-            (d for d in (value_at(m.get(DIRECTION), i) for m in models) if d is not None), key=place.shelter_at
+            (d for _, d in pairs if d is not None and (sector is None or sector.contains(d))), key=place.shelter_at
         )
         if gust is None or not directions:
             return None, None
         direction: float = _nth(directions, n)
         return place.effective_wind(gust, direction), direction
-    pairs = [(value_at(m.get(variable), i), value_at(m.get(DIRECTION), i)) for m in models]
     present = sorted(((v, d) for v, d in pairs if v is not None), key=lambda p: p[0], reverse=highest)
     if not present:
         return None, None
@@ -158,7 +165,10 @@ def _window(
             values[condition] = p
             continue
         variable, highest = SERIES[condition]
-        hours = [hourly(place, fc, condition, i, rule.worst) for i in window_indices(fc.times, t0, t1, variable)]
+        hours = [
+            hourly(place, fc, condition, i, rule.worst, rule.direction)
+            for i in window_indices(fc.times, t0, t1, variable)
+        ]
         present = [(v, d) for v, d in hours if v is not None]
         if not present:
             return None
@@ -179,14 +189,19 @@ def evaluate(
     now: datetime,
     wind_unit: str = "m/s",
 ) -> list[Alert]:
-    """The alerts *rule* gives within its horizon, in windows from the current hour on.
+    """The alerts *rule* gives within its horizon, from the window holding *now* on.
 
-    Thresholds are inclusive.  Consecutive windows where all conditions hold
-    merge into one alert, which keeps the worst value of each.
+    Windows sit on a fixed grid (their start is a multiple of the window
+    length since the epoch, in UTC), so a run at any time of the hour or
+    day sees the same windows.  Thresholds are inclusive.  Consecutive
+    windows where all conditions hold merge into one alert, which keeps the
+    worst value of each.
     """
     alerts: list[Alert] = []
-    t0 = now.replace(minute=0, second=0, microsecond=0)
-    end = t0 + rule.horizon
+    hour = now.replace(minute=0, second=0, microsecond=0)
+    epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
+    t0 = hour - (hour - epoch) % rule.window
+    end = hour + rule.horizon
     while t0 < end:
         t1 = min(t0 + rule.window, end)
         if not window_indices(fc.times, t0, t1, "wind_speed_10m"):

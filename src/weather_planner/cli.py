@@ -10,7 +10,10 @@ from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from calendaring.errors import CalendaringError
+
 from .alerts import Alert, evaluate, hourly
+from .calendar import Report, open_collection, sync
 from .config import Config, load_config
 from .openmeteo import DEFAULT_MODELS, UNITS, Client, Ensemble, Forecast, Marine, value_at, window_indices
 from .places import Place, compass_name
@@ -222,7 +225,21 @@ def cmd_alerts(args: argparse.Namespace) -> int:
         print()
     else:
         print_alerts(alerts)
+    if args.write:
+        try:
+            with open_collection(config.calendar_section) as collection:
+                report = sync(collection, place.name, alerts, now)
+        except (CalendaringError, ValueError) as e:
+            print(f"calendar: {e}", file=sys.stderr)
+            return 1
+        print_report(report, sys.stderr if args.json else sys.stdout)
     return 0
+
+
+def print_report(report: Report, file: Any) -> None:
+    for what, items in (("created", report.created), ("updated", report.updated), ("deleted", report.deleted)):
+        for item in items:
+            print(f"{what} {item}", file=file)
 
 
 def _hours(text: str) -> int:
@@ -251,9 +268,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     fc.add_argument("--no-marine", action="store_true", help="skip waves and swell")
     fc.add_argument("--json", action="store_true", help="machine-readable output")
     fc.set_defaults(func=cmd_forecast)
-    al = sub.add_parser("alerts", help="show the alerts the forecast gives (nothing is written to a calendar yet)")
+    al = sub.add_parser("alerts", help="show the alerts the forecast gives, and with --write put them in the calendar")
     al.add_argument("place", nargs="?", help="a configured place, or LAT,LON")
     al.add_argument("--json", action="store_true", help="machine-readable output")
+    al.add_argument(
+        "--write", action="store_true", help="create, update and delete the calendar's events and tasks to match"
+    )
     al.set_defaults(func=cmd_alerts)
     args = parser.parse_args(argv)
     result: int = args.func(args)
