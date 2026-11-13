@@ -16,16 +16,36 @@ This application is a side-project which will be mostly vibe-coded.
 `alerts` shows what alerts it gives; nothing is written to a calendar yet.
 Work windows and passage planning are planned.
 
+## Personal motivation
+
+I'm a sailor, but I hope this project can also be useful for landlubbers.  Most of the time I'm a nomad, quite often at anchor.  I'm spending lots of time checking the forecast; it's important for planning and preparation.  Like, sometimes a nice and quiet anchorage can turn into a mess in a very short time if the wind direction changes, other times simple things have to be done like "take in the laundry due to rain" or "It's going to be windy, remember to tie up or stow away all loose items on deck".  With this project I hope to:
+
+* Spend less time searching and interpreting relevant information
+* Get notified about significant weather events without actively having to search for them (particularly the CAPE index, I rarely check that one - but it may give a hint that it's likely to be rough and unexpected weather changes).
+* Plan the day, like some maintenance tasks can only be done in dry or warm or calm weather
+
+## Implemented feature: Alerts
+
+The forecast is checked hourly by a systemd timer and compared with the configured thresholds.  Weather alerts are issued through the calendar - an event describing the alert as the weather is supposed to happen, and/or a task with a DUE before the event advising the user to prepare for the weather.
+
+Some example use-cases:
+
+* Temperature: Ensuring water pipes (e.g. the garden outlet) are closed before the frost comes, reminding people to change the tires on the car/bike before the roads get icy, reminder to turn on cooling systems or heating systems.
+* Rain: Reminder to take in the air-dried laundry or protect other things that shouldn't get wet.  Reminder to locate the umbrella and/or rain clothes.
+* Wind: Tie up or stow away anything that can fly away before the wind picks up, and (personally most important), remind me to change anchorage before a cosy cove turns nasty due to change of wind/wave direction.
+* CAPE: High CAPE means unpredictable and often violent weather.  For me, that means checking the anchor sits well, ensure things like engine, rigging ropes and dinghy are prepared in case I need to leave an anchorage in a hurry, and preparing for possible rainfall and strong wind gusts even if none of the forecast models predicts it.
+
+## Planned features
+
+* First feature - weather alerts: Possibility to create weather events and tasks on the calendar - like 12:00 task: "prepare for strong winds", 14:00 event: "strong winds expected from NNE, 46 knots in the gusts".
+* Second feature: various tasks and activities can be weather-dependent, the tool should be able to suggest a time/date for a task and pin it to the calendar.
+* Route planning is also something I'm considering that could fit here.  Sometimes the destination is a variable that can be tuned according to the forecast, other times the date and time can be tuned, yet other times one just has to make the best of the situation there is.
+
 ## Data
 
 All forecasts come from [Open-Meteo](https://open-meteo.com/): the forecast,
 ensemble and marine APIs. Open-Meteo's free API is for **non-commercial use
 only**. Commercial users need an Open-Meteo subscription.
-
-## Planned features
-
-* First feature - weather alerts: Possibility to create weather events and tasks on the calendar - like 12:00 task: "prepare for strong winds", 14:00 event: "strong winds expected from NNE, 46 knots in the gusts".
-* Second feature: various tasks and activities can be weather-dependent, the tool can suggest a time/date for it and pin it to the calendar.
 
 ## Usage
 
@@ -113,16 +133,21 @@ reports the worst values.
 
 Not handled here, on purpose:
 
-* **Task deadlines at awkward hours.** A task due at 03:00 is a general
-  calendar problem, not a weather problem, so it belongs in the calendar
-  system. weather-planner must instead tolerate the user (or the calendar
-  system) moving deadlines and priorities of the tasks it creates.
-* **Cancelled tasks and events,** e.g. a task cancelled because the
+* **Task deadlines at awkward hours.** A task due at 03:00 is a
+  general calendar problem, not a weather problem, so it belongs in
+  the calendar system (plann has the "panic planning mode",
+  combined with a recurring "bedtime" event it will give a warning if
+  some task should be done before bedtime). weather-planner must instead tolerate the user
+  (or the calendar system) moving deadlines and priorities of the
+  tasks it creates.
+* **Cancelled tasks and events,** e.g. the user cancelling a task because the
   forecast wasn't that bad, followed by a forecast that got worse. Left for
-  a later release.
+  a later release, if ever.
 * Calendar fields other than the summary; they will become configurable
   later.
 
 ## Licence
 
 AGPL-3.0-or-later
+
+That's for the software itself.  As noted above, the software depends on Open-Meteo, and commercial usage requires a subscription with Open-Meteo.
