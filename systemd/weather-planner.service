@@ -1,0 +1,9 @@
+[Unit]
+Description=Put weather alerts in the calendar (weather-planner alerts --write)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+# make install-systemd replaces the path with where weather-planner was installed
+ExecStart=%h/.local/bin/weather-planner alerts --write
