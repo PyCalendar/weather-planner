@@ -13,7 +13,8 @@ with the connection configured in the shared calendaring-config file.
 This application is a side-project which will be mostly vibe-coded.
 
 **Status:** pre-alpha. The `forecast` command shows the forecast, and
-`alerts` shows what alerts it gives; nothing is written to a calendar yet.
+`alerts` shows what alerts it gives; `alerts --write` puts them in the
+calendar.
 Work windows and passage planning are planned.
 
 ## Personal motivation
@@ -47,6 +48,19 @@ All forecasts come from [Open-Meteo](https://open-meteo.com/): the forecast,
 ensemble and marine APIs. Open-Meteo's free API is for **non-commercial use
 only**. Commercial users need an Open-Meteo subscription.
 
+## Installation
+
+```shell
+make install
+```
+
+installs weather-planner for the current user (with uv, pipx or pip), and
+a systemd user timer that runs `weather-planner alerts --write` every hour.
+The timer is only enabled when the configuration file exists; otherwise
+enable it later with `systemctl --user enable --now weather-planner.timer`.
+`make install-systemd` installs just the timer, `make uninstall-systemd`
+removes it.
+
 ## Usage
 
 ```shell
@@ -55,6 +69,7 @@ weather-planner forecast home --hours 120     # a configured place
 weather-planner forecast home --json          # for scripts and AI assistants
 weather-planner alerts                        # alerts for the default place
 weather-planner alerts --json
+weather-planner alerts --write                # and put them in the calendar
 ```
 
 ## Configuration
@@ -62,7 +77,7 @@ weather-planner alerts --json
 `~/.config/weather-planner/config.yaml`:
 
 ```yaml
-calendar: weather          # a section in the calendaring-config file (not used yet)
+calendar: weather          # a section in the calendaring-config file; default: its default section
 default_place: home
 units: {wind: kn}          # display unit for wind: m/s (default), kn, km/h or bft
 places:
@@ -118,7 +133,9 @@ with `probability`, default 0.5), `temperature_below`, `temperature_above`
 
 Settings: `window` (1h-24h, default 3h), `horizon` (up to 16d), `lead`,
 `event` (true by default, false, or a summary), `task` (a summary; no task
-without it), and `worst`.
+without it), `worst`, and `direction`: a sector such as `135-225` or
+`315-45`, clockwise and inclusive, outside which wind does not count
+(for `wind`, `gust` and `effective_gust`).
 
 The forecast models disagree. Each condition looks at the `worst`-th worst
 model: 1 (the default) alerts if any model says so, 2 ignores the single
@@ -129,7 +146,31 @@ different models. Rain is taken from the ensemble instead, as the share of
 members with more than the given amount in the window.
 
 Consecutive windows that meet the conditions merge into one alert, which
-reports the worst values.
+reports the worst values. Windows sit on a fixed grid of their own length
+(a 3h window starts at 00, 03, 06, ... UTC), so an alert spans whole
+windows, starting with the one that holds the current time.
+
+### In the calendar
+
+`alerts --write` writes to the calendar that the `calendar` section of the
+calendaring-config file holds; the section must have exactly one calendar
+that takes both events and tasks. Events are transparent (free time), span
+the alert, and are named after it; tasks are due `lead` before it starts.
+Both carry the category `weather-planner`.
+
+Each run brings the calendar in step with the latest forecast. An item is
+the same alert as before when it has the same place and alert name and
+overlaps in time; it is updated in place. Items for alerts that are gone
+are deleted, if they lie wholly in the future and, for tasks, are still
+open. Completed and cancelled tasks are never touched, and a deadline that
+was moved after weather-planner set it is kept. An alert that has begun
+keeps its start, and its task its deadline.
+
+A closed task only holds back a new one while it overlaps the alert, and an
+event deleted by hand comes back on the next run while the alert lasts.
+
+Why it works this way is in
+[docs/design/CALENDAR_SYNC.md](docs/design/CALENDAR_SYNC.md).
 
 Not handled here, on purpose:
 
