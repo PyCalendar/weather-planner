@@ -1,6 +1,6 @@
 """The weather-planner configuration file (YAML).
 
-Calendar credentials are not kept here: ``calendar`` names a section of the
+Calendar credentials are not kept here: ``config_section`` names a section of the
 shared calendaring-config file.
 """
 
@@ -35,7 +35,7 @@ CONDITIONS: dict[str, Callable[[Any], float]] = {
 _SETTINGS = {"probability", "worst", "window", "horizon", "lead", "event", "task", "direction"}
 # Conditions a direction applies to
 WIND_CONDITIONS = ("effective_gust", "gust", "wind")
-_TOP_LEVEL = {"calendar", "default_place", "places", "units", "horizon", "alerts"}
+_TOP_LEVEL = {"config_section", "default_place", "places", "units", "horizon", "alerts"}
 
 
 def default_path() -> Path:
@@ -130,7 +130,7 @@ def parse_alert(name: str, data: Any, horizon: timedelta = DEFAULT_HORIZON) -> A
 class Config:
     places: dict[str, Place] = field(default_factory=dict)
     default_place: str | None = None
-    calendar_section: str | None = None
+    config_section: str | None = None
     wind_unit: str = "m/s"
     alerts: dict[str, AlertRule] = field(default_factory=dict)
 
@@ -146,7 +146,7 @@ class Config:
 
 
 def _check_name(what: str, name: Any) -> None:
-    # "/" separates the place from the alert in the calendar items' key
+    # Earlier versions keyed calendar items "<place>/<alert>"; keeping "/" out of the names keeps those readable.
     if not isinstance(name, str) or not name or "/" in name:
         raise ValueError(f"{what} name {name!r} must be a non-empty text without '/'")
 
@@ -181,7 +181,7 @@ def load_config(path: str | Path | None = None) -> Config:
     return Config(
         places=places,
         default_place=default,
-        calendar_section=raw.get("calendar"),
+        config_section=raw.get("config_section"),
         wind_unit=wind_unit,
         alerts=alerts,
     )

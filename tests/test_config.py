@@ -12,7 +12,7 @@ def test_load_config(tmp_path: Path) -> None:
     f = tmp_path / "config.yaml"
     f.write_text(
         """
-calendar: weather
+config_section: weather
 default_place: home
 places:
   home:
@@ -21,7 +21,7 @@ places:
 """
     )
     cfg = load_config(f)
-    assert cfg.calendar_section == "weather"
+    assert cfg.config_section == "weather"
     assert cfg.default_place == "home"
     assert cfg.places["home"].shelter_at(0) == 0.5
 

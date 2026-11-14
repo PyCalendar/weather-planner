@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from weather_planner.places import Place, Sector, parse_place
+from weather_planner.places import Place, Sector, distance_km, parse_place
 
 
 def test_sector_contains_with_wraparound() -> None:
@@ -77,3 +77,8 @@ def test_duplicate_shelter_direction_rejected() -> None:
 def test_position_out_of_range_rejected(pos: list[float]) -> None:
     with pytest.raises(ValueError, match="range"):
         parse_place("x", {"position": pos})
+
+
+def test_distance_km() -> None:
+    assert distance_km((60.0, 5.0), (60.0, 5.0)) == 0
+    assert distance_km((59.0, 10.0), (60.0, 10.0)) == pytest.approx(111.2, abs=0.2)  # a degree of latitude

@@ -13,7 +13,7 @@ from typing import Any
 from calendaring.errors import CalendaringError
 
 from .alerts import Alert, evaluate, hourly
-from .calendar import Report, open_collection, sync
+from .calendar import Report, open_calendars, sync
 from .config import Config, load_config
 from .openmeteo import DEFAULT_MODELS, UNITS, Client, Ensemble, Forecast, Marine, value_at, window_indices
 from .places import Place, compass_name
@@ -227,8 +227,8 @@ def cmd_alerts(args: argparse.Namespace) -> int:
         print_alerts(alerts)
     if args.write:
         try:
-            with open_collection(config.calendar_section) as collection:
-                report = sync(collection, place.name, alerts, now)
+            with open_calendars(config.config_section) as calendars:
+                report = sync(calendars, place, alerts, now)
         except (CalendaringError, ValueError) as e:
             print(f"calendar: {e}", file=sys.stderr)
             return 1

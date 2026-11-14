@@ -8,6 +8,7 @@ wind actually reaches the place.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -23,6 +24,13 @@ def _bearing(name: str) -> float:
 
 def compass_name(bearing: float) -> str:
     return COMPASS[round(bearing / 22.5) % 16]
+
+
+def distance_km(a: tuple[float, float], b: tuple[float, float]) -> float:
+    """Great-circle distance between two (latitude, longitude) points."""
+    (lat1, lon1), (lat2, lon2) = (tuple(map(math.radians, p)) for p in (a, b))
+    h = math.sin((lat2 - lat1) / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin((lon2 - lon1) / 2) ** 2
+    return 2 * 6371.0 * math.asin(math.sqrt(h))
 
 
 def _angle_diff(a: float, b: float) -> float:

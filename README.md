@@ -77,7 +77,7 @@ weather-planner alerts --write                # and put them in the calendar
 `~/.config/weather-planner/config.yaml`:
 
 ```yaml
-calendar: weather          # a section in the calendaring-config file; default: its default section
+config_section: weather  # a section in the calendaring-config file; default: its default section
 default_place: home
 units: {wind: kn}          # display unit for wind: m/s (default), kn, km/h or bft
 places:
@@ -152,15 +152,18 @@ windows, starting with the one that holds the current time.
 
 ### In the calendar
 
-`alerts --write` writes to the calendar that the `calendar` section of the
-calendaring-config file holds; the section must have exactly one calendar
-that takes both events and tasks. Events are transparent (free time), span
+`alerts --write` writes to the calendars of the section of the
+calendaring-config file that `config_section` names: events to the first calendar that takes events,
+tasks to the first that takes tasks. They may well end up in different
+calendars.
+Events are transparent (free time), span
 the alert, and are named after it; tasks are due `lead` before it starts.
 Both carry the category `weather-planner`.
 
 Each run brings the calendar in step with the latest forecast. An item is
-the same alert as before when it has the same place and alert name and
-overlaps in time; it is updated in place. Items for alerts that are gone
+the same alert as before when it is at the same place (`LOCATION` is the
+place's name, `GEO` its position, and a `GEO` more than 5 km off is another
+place), was written for the same alert name and overlaps in time; it is updated in place. Items for alerts that are gone
 are deleted, if they lie wholly in the future and, for tasks, are still
 open. Completed and cancelled tasks are never touched, and a deadline that
 was moved after weather-planner set it is kept. An alert that has begun

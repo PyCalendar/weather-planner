@@ -40,7 +40,9 @@ So a UID is random (`weather-planner-<place>-<alert>-<uuid4>`, readable only
 for debugging) and is never used for matching. Instead, an existing item
 belongs to a new alert when:
 
-* its key (`X-WEATHER-PLANNER`, below) is the same place and alert name, and
+* it is at the same place: `LOCATION` is the place's name, and `GEO`, if
+  present, is within 5 km of the place's position,
+* its key (`X-WEATHER-PLANNER`, below) is the alert's name, and
 * its stored span overlaps the alert's span.
 
 Each existing item is matched at most once. When a match is found, the item is
@@ -49,17 +51,24 @@ updated in place and keeps its UID.
 ## The X-properties
 
 iCalendar allows private `X-` properties, and CalDAV servers are required to
-store them. weather-planner uses four:
+store them. weather-planner uses three (the place is in `LOCATION` and `GEO`):
 
 | property | value | why it is needed |
 |---|---|---|
-| `X-WEATHER-PLANNER` | `<place>/<alert>` | The matching key. It marks an item as weather-planner's, and says which place and alert it belongs to. The category alone cannot do that: it is a user-visible label the user may also put on their own items (the author's project category is literally `weather-planner`), and it carries neither the place nor the alert. The `/` separates the two, so neither name may contain one; otherwise place `a` with alert `b/c` and place `a/b` with alert `c` would share a key, and one place's run could delete the other's items. |
+| `X-WEATHER-PLANNER` | `<alert>` | The rule the item was written for. Together with the category it marks an item as weather-planner's. The category alone cannot do that: it is a user-visible label the user may also put on their own items (the author's project category is literally `weather-planner`). The place is not part of the key; it is the standard `LOCATION` (the place's name) and `GEO` (its position), which the calendar clients show and understand. Earlier versions wrote `<place>/<alert>` here and no `LOCATION`/`GEO`; such items are still found, and rewritten in the new form on the next run. |
 | `X-WEATHER-PLANNER-START`, `-END` | the alert's span, ISO 8601 UTC | Overlap matching needs the span. A task has no span of its own, only a deadline (`DUE` = start − lead), and once the user moves the deadline even the start cannot be worked out from it. An event's `DTSTART`/`DTEND` may be edited by the user, and the start is held fixed once the alert has begun (below), so they are not a reliable record either. Storing the span explicitly gives tasks and events the same matching rule. |
 | `X-WEATHER-PLANNER-DUE` | the deadline weather-planner last wrote | Tells a deadline the user (or a planner like plann) moved apart from one weather-planner set. If `DUE` still equals this instant, the tool may move it along with the alert. If not, it has been moved by someone else and is left alone. It is compared as an instant, not as a string, because clients re-serialise `DUE` in local time with a `TZID`. |
 
+**Risk:** editing `LOCATION` (or moving `GEO` far away) detaches an item from
+its place. It is then no longer ours: it is neither updated nor deleted, and
+the next run creates a new one. The same happens when the place's configured
+position is changed by more than 5 km, or its name changed: the old items are
+no longer at the place. Matching on `GEO` alone would survive such an
+edit but not two places close to each other, so both are checked.
+
 The category `weather-planner` is set as well. It is for the user (to see or
 filter what the tool made), and it narrows the search the tool runs to find
-its own items. The `X-WEATHER-PLANNER` key then decides.
+its own items. The place (`LOCATION`, `GEO`), the key and the span then decide.
 
 **Risk:** a server or client that drops unknown `X-` properties breaks the
 matching. Every run would then see no items of its own, create new ones, and
@@ -107,12 +116,18 @@ task planner.
 
 ## Which calendar
 
-The `calendar` setting names a section of the shared calendaring-config file.
-Without it, the default section is used. That section must hold exactly one
-calendar that takes both events and tasks, because weather-planner does not
-guess. Choosing one calendar among several, as caldav's `calendar_url` and
-`calendar_name` keys do, is not supported by calendaring yet:
-https://github.com/pycalendar/calendaring/issues/31.
+The `config_section` setting names a section of the shared calendaring-config file.
+Without it, the default section is used. Events go to the first calendar
+(in the order calendaring lists them) that takes events, tasks to the first
+that takes tasks. They need not share a calendar: some servers, and some
+groupware, keep them apart.
+
+"First" is a guess, and it moves if calendars are added or reordered, or
+the server lists them in another order. Only the place for *new* items
+moves with it: our items are looked for in every calendar of the section that
+takes that kind, and updated or deleted where they are. There is deliberately
+no setting to name a calendar. A section with an unreachable backend is an
+error, rather than a reason to silently pick another calendar.
 
 ## Alternatives not taken
 

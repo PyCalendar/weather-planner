@@ -235,6 +235,8 @@ def test_alerts_write_puts_them_in_the_calendar(
 
     from calendaring import Backend, Component, Workspace
 
+    from weather_planner.calendar import Calendars
+
     _fake(monkeypatch, forecast_json, ensemble_json, marine_json)
     backend = Backend.open(str(tmp_path))
     Workspace([backend])
@@ -244,9 +246,9 @@ def test_alerts_write_puts_them_in_the_calendar(
     @contextmanager
     def fake_open(section: str | None = None) -> Any:
         sections.append(section)
-        yield collection
+        yield Calendars(events=collection, tasks=collection)
 
-    monkeypatch.setattr(cli, "open_collection", fake_open)
+    monkeypatch.setattr(cli, "open_calendars", fake_open)
     f = tmp_path / "c.yaml"
     f.write_text(ALERT_CONFIG)
     assert cli.main(["--config", str(f), "alerts", "--write"]) == 0

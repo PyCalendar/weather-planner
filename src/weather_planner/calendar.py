@@ -1,8 +1,10 @@
 """Put alerts in a calendar, as events and tasks, and keep them in step with the forecast.
 
 Each run sees a new forecast, so the items written last time are found again
-and updated rather than added anew: an item belongs to an alert when it has
-the same place and rule and its time overlaps the alert's.  Items for alerts
+and updated rather than added anew: an item belongs to an alert when it is
+at the same place (its ``LOCATION`` is the place's name and its ``GEO`` is
+near the place's position), was written for the same rule and its time
+overlaps the alert's.  Items for alerts
 that are gone are deleted, as long as they lie wholly in the future and, for
 a task, it is still open.
 
@@ -24,21 +26,27 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from calendaring import Component, SyncItem, SyncTask, Workspace
 from icalendar_searcher import Searcher
 
 from .alerts import Alert
+from .places import Place, distance_km
 
 # Marks every item we write, so that we only ever search for (and delete) our own.
 CATEGORY = "weather-planner"
 
 # Private iCalendar properties, stored on each item so the next run can find it again.
-KEY = "X-WEATHER-PLANNER"  # "<place>/<alert name>"
+KEY = "X-WEATHER-PLANNER"  # the alert's name (earlier versions wrote "<place>/<alert name>")
 START = "X-WEATHER-PLANNER-START"  # the alert's span; also set on tasks, which have no DTSTART
 END = "X-WEATHER-PLANNER-END"
 DUE = "X-WEATHER-PLANNER-DUE"  # the deadline last written (tasks only)
+
+# An item whose GEO is further than this from the place's position is not at that place.
+PLACE_TOLERANCE_KM = 5.0
+# A GEO this close to the place's position is as written (servers may round coordinates).
+GEO_PRECISION_KM = 0.01
 
 CLOSED = {"COMPLETED", "CANCELLED"}  # STATUS values of a task nobody should touch any more
 
@@ -56,37 +64,78 @@ class Report:
     deleted: list[str] = field(default_factory=list)
 
 
-@contextmanager
-def open_collection(section: str | None = None, path: str | Path | None = None) -> Iterator[Any]:
-    """The calendar holding both events and tasks in *section* (default: the default section).
+@dataclass
+class Calendars:
+    """Where new events and tasks go (the same calendar if it takes both), and where ours are looked for."""
 
-    Raises ValueError when there is none, or more than one to choose from.
+    events: Any
+    tasks: Any
+    searched: list[Any] = field(default_factory=list)  # every calendar of the section; ours may be in any
+
+
+def _first_taking(calendars: list[Any], component: Component) -> Any:
+    """The first of *calendars* that takes *component*."""
+    for calendar in calendars:
+        if component in calendar.components:
+            return calendar
+    what = "events" if component == Component.EVENT else "tasks"
+    raise ValueError(f"no calendar takes {what}")
+
+
+@contextmanager
+def open_calendars(section: str | None = None, path: str | Path | None = None) -> Iterator[Calendars]:
+    """The calendars for events and for tasks in *section* (default: the default section).
+
+    New items go to the first calendar that takes that kind, so events and
+    tasks may go to the same one.  Items we wrote earlier are looked for in
+    all the calendars, so that a change of which one is first leaves none
+    behind.  Raises ValueError when there is no calendar for a kind.
     """
     with Workspace.from_config(path, section=section) as workspace:
         listed = workspace.collections()
         if listed.errors:
             raise ValueError("; ".join(f"{k}: {v}" for k, v in listed.errors.items()))
-        wanted = {Component.EVENT, Component.TASK}
-        found = [c for c in listed.items if wanted <= c.components]
-        if len(found) != 1:
-            names = ", ".join(c.name or c.id for c in found)
-            raise ValueError(
-                f"{len(found)} calendars hold both events and tasks in section {section or 'default'}"
-                + (f" ({names})" if names else "")
-                + "; weather-planner needs exactly one"
-            )
-        yield found[0]
+        yield Calendars(
+            events=_first_taking(listed.items, Component.EVENT),
+            tasks=_first_taking(listed.items, Component.TASK),
+            searched=listed.items,
+        )
 
 
 # --- Reading what is already in the calendar -------------------------------
 
 
-def _own(collection: Any, place: str, kind: str) -> list[SyncItem]:
+def _rule(c: Any) -> str:
+    """The name of the alert rule the item was written for."""
+    return str(c.get(KEY, "")).rpartition("/")[2]  # the part after the place, in the old "<place>/<rule>" keys
+
+
+def _geo(c: Any) -> tuple[float, float] | None:
+    """The item's GEO, or None when it has none (calendaring refuses a malformed one when reading)."""
+    return c.decoded("GEO") if "GEO" in c else None
+
+
+def _at_place(c: Any, place: Place) -> bool:
+    """Whether the item was written for *place*: same LOCATION, and a GEO (if any) not far off."""
+    legacy_key = str(c.get(KEY, ""))
+    if "/" in legacy_key:  # older versions wrote no LOCATION or GEO, only "<place>/<rule>"
+        return legacy_key.startswith(f"{place.name}/")
+    if str(c.get("LOCATION", "")) != place.name:
+        return False
+    geo = _geo(c)
+    return geo is None or distance_km(geo, place.position) <= PLACE_TOLERANCE_KM
+
+
+def _own_for_place(collections: list[Any], place: Place, kind: str) -> list[SyncItem]:
     """All events (kind "event") or tasks (kind "todo") we have written for *place*, closed ones included."""
-    searcher = Searcher(event=kind == EVENT, todo=kind == TODO, include_completed=True)
+    searcher = Searcher(event=(kind == EVENT), todo=(kind == TODO), include_completed=True)
     searcher.add_property_filter("categories", CATEGORY)
-    prefix = f"{place}/"
-    return [i for i in collection.search(searcher) if str(i.component.get(KEY, "")).startswith(prefix)]
+    return [
+        i
+        for collection in collections
+        for i in collection.search(searcher)
+        if KEY in i.component and _at_place(i.component, place)
+    ]
 
 
 def _span(item: SyncItem) -> tuple[datetime, datetime]:
@@ -134,7 +183,7 @@ def _put(c: Any, name: str, value: str) -> bool:
     return True
 
 
-def _set(item: SyncItem, a: Alert, place: str) -> bool:
+def _set(item: SyncItem, a: Alert, place: Place) -> bool:
     """Write *a* into *item*, touching only what differs; whether anything changed.
 
     Changing nothing matters: an unchanged item is not saved, which keeps
@@ -145,12 +194,18 @@ def _set(item: SyncItem, a: Alert, place: str) -> bool:
 
     # Common to events and tasks: our bookkeeping properties and the description.
     for name, value in {
-        KEY: f"{place}/{a.name}",
+        KEY: a.name,
+        "LOCATION": place.name,
         START: a.start.isoformat(),
         END: a.end.isoformat(),
         "DESCRIPTION": _description(a),
     }.items():
         changed |= _put(c, name, value)
+    geo = _geo(c)
+    if geo is None or distance_km(geo, place.position) > GEO_PRECISION_KM:  # servers may round it
+        c.pop("GEO", None)
+        c.add("GEO", place.position)
+        changed = True
     if CATEGORY not in [str(x) for x in c.categories]:
         c.categories = [*c.categories, CATEGORY]
         changed = True
@@ -181,18 +236,17 @@ def _set(item: SyncItem, a: Alert, place: str) -> bool:
 # --- Syncing -------------------------------------------------------------------
 
 
-def _uid(place: str, a: Alert) -> str:
+def _uid(place: Place, a: Alert) -> str:
     """A fresh UID; readable in the calendar's raw data, unique through the UUID."""
-    return f"weather-planner-{place}-{a.name}-{uuid.uuid4()}"
+    return f"weather-planner-{place.name}-{a.name}-{uuid.uuid4()}"
 
 
-def _find_match(existing: list[SyncItem], used: set[str], place: str, a: Alert) -> SyncItem | None:
-    """The not yet claimed item written for the same place and rule as *a*, with an overlapping span."""
-    key = f"{place}/{a.name}"
-    return next((i for i in existing if i.uid not in used and str(i.component[KEY]) == key and _overlaps(i, a)), None)
+def _find_match(existing: list[SyncItem], used: set[str], a: Alert) -> SyncItem | None:
+    """The not yet claimed item (already known to be at the right place) written for *a*'s rule, overlapping it."""
+    return next((i for i in existing if i.uid not in used and _rule(i.component) == a.name and _overlaps(i, a)), None)
 
 
-def _create(collection: Any, place: str, a: Alert, kind: str) -> SyncItem:
+def _create(collection: Any, place: Place, a: Alert, kind: str) -> SyncItem:
     """Add a new event or task for *a* to *collection* and save it."""
     item: Any
     if kind == TODO:
@@ -206,21 +260,24 @@ def _create(collection: Any, place: str, a: Alert, kind: str) -> SyncItem:
         )
     _set(item, a, place)  # fills in the rest
     item.save()
-    return item
+    return cast(SyncItem, item)
 
 
-def _sync_kind(collection: Any, place: str, alerts: list[Alert], now: datetime, kind: str, report: Report) -> None:
-    """Bring the calendar's events (or tasks) for *place* in line with *alerts*.
+def _sync_kind(
+    collection: Any, searched: list[Any], place: Place, alerts: list[Alert], now: datetime, kind: str, report: Report
+) -> None:
+    """Bring the events (or tasks) for *place* in line with *alerts*.
 
     Every alert is matched to an existing item (updated), or gets a new one
-    (created); existing items left unmatched are deleted if still in the future.
+    (created in *collection*).  Existing items are looked for in all of
+    *searched*; those left unmatched are deleted if still in the future.
     """
     label = "event" if kind == EVENT else "task"
-    existing = _own(collection, place, kind)
+    existing = _own_for_place(searched, place, kind)
     used: set[str] = set()  # UIDs of the items matched so far; each item serves one alert only
 
     for alert in alerts:
-        match = _find_match(existing, used, place, alert)
+        match = _find_match(existing, used, alert)
         if match is None:
             item = _create(collection, place, alert, kind)
             report.created.append(f"{label}: {item.component['SUMMARY']}")
@@ -249,12 +306,35 @@ def _sync_kind(collection: Any, place: str, alerts: list[Alert], now: datetime, 
             item.delete()
 
 
-def sync(collection: Any, place: str, alerts: list[Alert], now: datetime) -> Report:
-    """Make *collection* hold the events and tasks *alerts* give for *place*, and no other ones of ours.
+def _searched(calendars: Calendars, target: Any, component: Component) -> list[Any]:
+    """The calendars to look for our items of this kind in: the target, and the others that take the kind."""
+    others = [c for c in calendars.searched if c is not target and component in c.components]
+    return [target, *others]
+
+
+def sync(calendars: Calendars, place: Place, alerts: list[Alert], now: datetime) -> Report:
+    """Make the calendars hold the events and tasks *alerts* give for *place*, and no other ones of ours.
 
     An alert gives an event if it has a ``summary`` and a task if it has a ``task``.
     """
     report = Report()
-    _sync_kind(collection, place, [a for a in alerts if a.summary is not None], now, EVENT, report)
-    _sync_kind(collection, place, [a for a in alerts if a.task is not None], now, TODO, report)
+    events, tasks = calendars.events, calendars.tasks
+    _sync_kind(
+        events,
+        _searched(calendars, events, Component.EVENT),
+        place,
+        [a for a in alerts if a.summary is not None],
+        now,
+        EVENT,
+        report,
+    )
+    _sync_kind(
+        tasks,
+        _searched(calendars, tasks, Component.TASK),
+        place,
+        [a for a in alerts if a.task is not None],
+        now,
+        TODO,
+        report,
+    )
     return report
