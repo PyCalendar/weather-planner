@@ -2,7 +2,8 @@
 
 Models disagree, so each condition looks at the ``worst``-th worst model
 (1 = the worst one, 2 = ignore the single most pessimistic model, ...).
-Rain comes from the ensemble instead, as a probability.
+Rain comes from the ensemble instead, as a probability, and waves from the
+marine forecast, which has a single model.
 
 Nothing here touches a calendar; an :class:`Alert` says what the calendar
 should get.
@@ -15,8 +16,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from .config import WIND_CONDITIONS, AlertRule
-from .openmeteo import Ensemble, Forecast, value_at, window_indices
+from .config import DIRECTIONAL, WIND_CONDITIONS, AlertRule
+from .openmeteo import Ensemble, Forecast, Marine, value_at, window_indices
 from .places import Place, Sector, compass_name
 from .probability import probability_exceeds
 from .units import format_speed
@@ -30,7 +31,6 @@ SERIES = {
     "temperature_above": ("temperature_2m", True),
     "cape": ("cape", True),
 }
-# The direction reported for an alert comes from the first of WIND_CONDITIONS it has
 DIRECTION = "wind_direction_10m"
 
 
@@ -108,7 +108,7 @@ class Alert:
         return self.start - self.rule.lead if self.rule.task is not None else None
 
     def describe(self, wind_unit: str = "m/s") -> str:
-        source = next((c for c in WIND_CONDITIONS if c in self.values), None)
+        source = _source(self.values)
         parts = []
         for condition, value in self.values.items():
             if condition in WIND_CONDITIONS:
@@ -120,6 +120,10 @@ class Alert:
             elif condition == "rain":
                 hours = self.rule.window // timedelta(hours=1)
                 text = f"rain over {self.rule.conditions['rain']:g} mm per {hours}h, {value:.0%} likely"
+            elif condition == "waves":
+                text = f"waves to {value:.1f} m"
+                if condition == source and self.direction is not None:
+                    text += f" from {compass_name(self.direction)}"
             elif condition == "temperature_below":
                 text = f"down to {value:.0f} °C"
             elif condition == "temperature_above":
@@ -145,17 +149,60 @@ class Alert:
         }
 
 
+def _source(conditions: Iterable[str]) -> str | None:
+    """The condition whose direction an alert reports."""
+    present = set(conditions)
+    return next((c for c in DIRECTIONAL if c in present), None)
+
+
+def _waves(rule: AlertRule, marine: Marine, t0: datetime, t1: datetime) -> tuple[float, float | None] | None:
+    """The highest wave in [t0, t1) and its direction; waves from outside ``direction`` count as none."""
+    heights, directions = marine.values.get("wave_height"), marine.values.get("wave_direction")
+    hours = []
+    for i in window_indices(marine.times, t0, t1, "wave_height"):
+        h, d = value_at(heights, i), value_at(directions, i)
+        if h is None:
+            continue
+        if rule.direction is not None and (d is None or not rule.direction.contains(d)):
+            h, d = 0.0, None
+        hours.append((h, d))
+    return max(hours, key=lambda p: p[0]) if hours else None
+
+
+def wave_data_warning(marine: Marine, now: datetime, horizon: timedelta) -> str | None:
+    """Why waves alerts may stay silent within *horizon* from *now*, or None.
+
+    The marine model's grid is coarse: a point near the shore may sit in a
+    land cell, which has no waves at all.
+    """
+    hour = now.replace(minute=0, second=0, microsecond=0)
+    heights = marine.values.get("wave_height")
+    stamps = [t for i, t in enumerate(marine.times) if value_at(heights, i) is not None and t >= hour]
+    lat, lon = marine.grid_point
+    if not stamps:
+        return f"no wave data at the marine grid point {lat:.3f},{lon:.3f} (land?); waves alerts cannot fire"
+    if stamps[-1] < hour + horizon - timedelta(hours=1):
+        return f"wave data ends at {stamps[-1]:%a %d %H:%M} UTC, before the alert horizon"
+    return None
+
+
 def _worse(condition: str, a: float, b: float) -> bool:
     """Whether *a* is worse than *b*."""
-    if condition == "rain":
+    if condition in ("rain", "waves"):
         return a > b
     return a > b if SERIES[condition][1] else a < b
 
 
 def _window(
-    rule: AlertRule, place: Place, fc: Forecast, ens: Ensemble | None, t0: datetime, t1: datetime
+    rule: AlertRule,
+    place: Place,
+    fc: Forecast,
+    ens: Ensemble | None,
+    marine: Marine | None,
+    t0: datetime,
+    t1: datetime,
 ) -> tuple[dict[str, float], float | None] | None:
-    """The worst values in [t0, t1) if all conditions hold there, and the wind direction."""
+    """The worst values in [t0, t1) if all conditions hold there, and the direction of the wind (or waves)."""
     values: dict[str, float] = {}
     directions: dict[str, float | None] = {}
     for condition, threshold in rule.conditions.items():
@@ -166,6 +213,14 @@ def _window(
             if p is None or p < rule.probability:
                 return None
             values[condition] = p
+            continue
+        if condition == "waves":
+            if marine is None:
+                raise ValueError(f"alert {rule.name}: waves need the marine forecast")
+            found = _waves(rule, marine, t0, t1)
+            if found is None or found[0] < threshold:
+                return None
+            values[condition], directions[condition] = found
             continue
         variable, highest = SERIES[condition]
         hours = [
@@ -180,7 +235,7 @@ def _window(
             return None
         values[condition] = value
         directions[condition] = direction
-    source = next((c for c in WIND_CONDITIONS if c in directions), None)
+    source = _source(directions)
     return values, directions[source] if source else None
 
 
@@ -191,6 +246,7 @@ def evaluate(
     ens: Ensemble | None,
     now: datetime,
     wind_unit: str = "m/s",
+    marine: Marine | None = None,
 ) -> list[Alert]:
     """The alerts *rule* gives within its horizon, from the window holding *now* on.
 
@@ -209,7 +265,7 @@ def evaluate(
         t1 = min(t0 + rule.window, end)
         if not window_indices(fc.times, t0, t1, "wind_speed_10m"):
             break  # past the end of the forecast
-        found = _window(rule, place, fc, ens, t0, t1)
+        found = _window(rule, place, fc, ens, marine, t0, t1)
         if found is not None:
             values, direction = found
             last = alerts[-1] if alerts else None
@@ -218,7 +274,7 @@ def evaluate(
                 for condition, value in values.items():
                     if _worse(condition, value, last.values[condition]):
                         last.values[condition] = value
-                        if condition == next((c for c in WIND_CONDITIONS if c in values), None):
+                        if condition == _source(values):
                             last.direction = direction
             else:
                 alerts.append(Alert(rule, t0, t1, values, direction, wind_unit))

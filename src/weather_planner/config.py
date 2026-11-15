@@ -31,10 +31,12 @@ CONDITIONS: dict[str, Callable[[Any], float]] = {
     "temperature_below": lambda v: parse_amount(v, "°C"),
     "temperature_above": lambda v: parse_amount(v, "°C"),
     "cape": lambda v: parse_amount(v, "J/kg"),
+    "waves": lambda v: parse_amount(v, "m"),
 }
 _SETTINGS = {"probability", "worst", "window", "horizon", "lead", "event", "task", "direction"}
-# Conditions a direction applies to
 WIND_CONDITIONS = ("effective_gust", "gust", "wind")
+# Conditions a direction applies to; an alert reports the direction of the first one it has
+DIRECTIONAL = (*WIND_CONDITIONS, "waves")
 _TOP_LEVEL = {"config_section", "default_place", "places", "units", "horizon", "alerts"}
 
 
@@ -60,7 +62,7 @@ class AlertRule:
     lead: timedelta = timedelta(0)  # the task is due this long before the alert starts
     event: bool | str = True  # a string is the event's summary
     task: str | None = None  # the task's summary; None for no task
-    direction: Sector | None = None  # only wind from here counts
+    direction: Sector | None = None  # only wind (and waves) from here count
 
 
 def parse_alert(name: str, data: Any, horizon: timedelta = DEFAULT_HORIZON) -> AlertRule:
@@ -92,8 +94,8 @@ def parse_alert(name: str, data: Any, horizon: timedelta = DEFAULT_HORIZON) -> A
         if not 0 < rule.probability <= 1:
             raise ValueError(f"alert {name}: probability must be above 0 and at most 1")
     if "direction" in data:
-        if not any(c in conditions for c in WIND_CONDITIONS):
-            raise ValueError(f"alert {name}: direction only applies to {', '.join(WIND_CONDITIONS)}")
+        if not any(c in conditions for c in DIRECTIONAL):
+            raise ValueError(f"alert {name}: direction only applies to {', '.join(DIRECTIONAL)}")
         try:
             rule.direction = Sector.parse(str(data["direction"]))
         except ValueError as e:

@@ -12,7 +12,7 @@ from typing import Any
 
 from calendaring.errors import CalendaringError
 
-from .alerts import Alert, evaluate, hourly
+from .alerts import Alert, evaluate, hourly, wave_data_warning
 from .calendar import Report, open_calendars, sync
 from .config import Config, load_config
 from .openmeteo import DEFAULT_MODELS, UNITS, Client, Ensemble, Forecast, Marine, value_at, window_indices
@@ -215,11 +215,16 @@ def cmd_alerts(args: argparse.Namespace) -> int:
     try:
         fc = client.forecast(lat, lon, models=list(DEFAULT_MODELS), days=days)
         ens = client.ensemble(lat, lon, days=days) if any("rain" in r.conditions for r in rules) else None
+        marine = client.marine(lat, lon, days=days) if any("waves" in r.conditions for r in rules) else None
     except ValueError as e:
         print(e, file=sys.stderr)
         return 1
     now = _now()
-    alerts = [a for r in rules for a in evaluate(r, place, fc, ens, now, config.wind_unit)]
+    if marine is not None:
+        warning = wave_data_warning(marine, now, max(r.horizon for r in rules if "waves" in r.conditions))
+        if warning:
+            print(f"warning: {warning}", file=sys.stderr)
+    alerts = [a for r in rules for a in evaluate(r, place, fc, ens, now, config.wind_unit, marine)]
     if args.json:
         json.dump({"place": place.name, "alerts": [a.to_json() for a in alerts]}, sys.stdout, indent=1)
         print()

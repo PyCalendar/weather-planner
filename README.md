@@ -129,18 +129,36 @@ Conditions, all of which must hold within a window (make two alerts for
 "either"): `wind`, `gust`, `effective_gust` (a number in m/s, or with a
 unit: `25 kn`, `90 km/h`, `7 bft` meaning force 7 or more), `rain` (mm,
 with `probability`, default 0.5), `temperature_below`, `temperature_above`
-(°C) and `cape` (J/kg). Thresholds are inclusive.
+(°C), `cape` (J/kg) and `waves` (significant wave height in m, from the
+marine forecast at the place's `forecast_point`). Thresholds are inclusive.
 
 Settings: `window` (1h-24h, default 3h), `horizon` (up to 16d), `lead`,
 `event` (true by default, false, or a summary), `task` (a summary; no task
 without it), `worst`, and `direction`: a sector such as `135-225` or
-`315-45`, clockwise and inclusive, outside which wind does not count
-(for `wind`, `gust` and `effective_gust`).
+`315-45`, clockwise and inclusive, outside which wind (for `wind`,
+`gust` and `effective_gust`) and waves (for `waves`, by the wave
+direction) do not count.
+
+For a harbour, put `forecast_point` out at sea and alert on the waves
+outside that make the harbour uncomfortable. The one point serves the
+wind as well, which out there is a bit stronger than inside: an alert
+errs towards coming. The marine model's grid is coarse; when its point
+falls on land there are no waves, and `alerts` warns about that.
+
+```yaml
+alerts:
+  easterly-waves:
+    waves: 3 m
+    direction: 45-135
+    task: double the mooring lines
+    lead: 6h
+```
 
 The forecast models disagree. Each condition looks at the `worst`-th worst
 model: 1 (the default) alerts if any model says so, 2 ignores the single
 most pessimistic model, and so on. With fewer models than that, the least
-bad one counts. The effective gust combines the `worst`-th strongest gust
+bad one counts. The marine forecast has only one model, so `worst` does
+not apply to `waves`. The effective gust combines the `worst`-th strongest gust
 with the `worst`-th least sheltered direction, even when they come from
 different models. Rain is taken from the ensemble instead, as the share of
 members with more than the given amount in the window.

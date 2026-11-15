@@ -5,9 +5,9 @@ from typing import Any
 
 import pytest
 
-from weather_planner.alerts import evaluate, nth_worst
+from weather_planner.alerts import evaluate, nth_worst, wave_data_warning
 from weather_planner.config import AlertRule, parse_alert
-from weather_planner.openmeteo import Ensemble, Forecast
+from weather_planner.openmeteo import Ensemble, Forecast, Marine
 from weather_planner.places import parse_place
 
 T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -185,3 +185,80 @@ def test_windows_sit_on_a_fixed_grid_whatever_the_time_of_the_run(minutes: int) 
     now = T0 + timedelta(hours=3, minutes=minutes)  # all within the 03-06 window
     [alert] = evaluate(rule(gust=20, window="3h"), OPEN, fc, None, now)
     assert (alert.start, alert.end) == (T0 + timedelta(hours=3), T0 + timedelta(hours=9))
+
+
+def marine(
+    heights: float | list[float | None], directions: float | list[float | None] = 90.0, hours: int = 24
+) -> Marine:
+    def series(v: float | list[float | None]) -> list[float | None]:
+        return list(v) if isinstance(v, list) else [v] * hours
+
+    return Marine(
+        times=[T0 + timedelta(hours=h) for h in range(hours)],
+        grid_point=(0, 0),
+        values={"wave_height": series(heights), "wave_direction": series(directions)},
+    )
+
+
+def test_waves_alert_from_the_marine_forecast() -> None:
+    heights: list[float | None] = [1.0] * 24
+    heights[7] = 3.4  # 06:00-09:00 window
+    [alert] = evaluate(rule(waves="3 m"), OPEN, forecast(a={}), None, T0, marine=marine(heights))
+    assert (alert.start, alert.end) == (T0 + timedelta(hours=6), T0 + timedelta(hours=9))
+    assert alert.values["waves"] == pytest.approx(3.4)
+    assert alert.direction == 90
+    assert alert.describe() == "test: waves to 3.4 m from E"
+
+
+def test_waves_direction_filters_on_wave_direction() -> None:
+    fc = forecast(a={})  # wind from the north does not matter for waves
+    assert evaluate(rule(waves=3, direction="45-135"), OPEN, fc, None, T0, marine=marine(3.5, 90.0))
+    assert not evaluate(rule(waves=3, direction="45-135"), OPEN, fc, None, T0, marine=marine(3.5, 270.0))
+
+
+def test_waves_need_the_marine_forecast() -> None:
+    with pytest.raises(ValueError, match="marine"):
+        evaluate(rule(waves=3), OPEN, forecast(a={}), None, T0)
+
+
+def test_waves_threshold_in_metres_only() -> None:
+    assert rule(waves="2.5 m").conditions["waves"] == 2.5
+    with pytest.raises(ValueError, match="expected a number in m"):
+        rule(waves="3 ft")
+
+
+def test_consecutive_wave_windows_merge_keeping_the_highest_and_its_direction() -> None:
+    heights: list[float | None] = [1.0] * 24
+    directions: list[float | None] = [90.0] * 24
+    heights[1], heights[4], directions[4] = 3.2, 3.8, 120.0  # windows 00-03 and 03-06
+    [alert] = evaluate(rule(waves=3), OPEN, forecast(a={}), None, T0, marine=marine(heights, directions))
+    assert (alert.start, alert.end) == (T0, T0 + timedelta(hours=6))
+    assert alert.values["waves"] == pytest.approx(3.8)
+    assert alert.direction == 120
+
+
+def test_mixed_rule_reports_wind_direction_and_needs_both() -> None:
+    fc = forecast(a={"wind_gusts_10m": 20.0, "wind_direction_10m": 270.0})
+    [alert] = evaluate(rule(gust=15, waves=3), OPEN, fc, None, T0, marine=marine(3.5, 90.0))
+    assert alert.direction == 270
+    assert alert.describe() == "test: gusts to 20 m/s from W, waves to 3.5 m"
+    assert not evaluate(rule(gust=15, waves=3), OPEN, fc, None, T0, marine=marine(2.0))
+
+
+def test_missing_wave_values_are_skipped() -> None:
+    heights: list[float | None] = [None] * 24
+    heights[2] = 3.5
+    assert evaluate(rule(waves=3), OPEN, forecast(a={}), None, T0, marine=marine(heights))
+    assert not evaluate(rule(waves=3), OPEN, forecast(a={}), None, T0, marine=marine([None] * 24))
+
+
+def test_out_of_sector_wave_reports_no_direction() -> None:
+    [alert] = evaluate(rule(waves=0, direction="45-135"), OPEN, forecast(a={}), None, T0, marine=marine(3.5, 270.0))
+    assert alert.direction is None
+
+
+def test_wave_data_warning() -> None:
+    horizon = timedelta(hours=24)
+    assert wave_data_warning(marine(1.0), T0, horizon) is None
+    assert "no wave data" in (wave_data_warning(marine([None] * 24), T0, horizon) or "")
+    assert "ends" in (wave_data_warning(marine(1.0, hours=12), T0, horizon) or "")
