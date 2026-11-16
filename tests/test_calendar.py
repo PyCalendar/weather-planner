@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pytest
 from calendaring import Backend, Component, SyncEvent, SyncTask, Workspace
@@ -97,6 +98,45 @@ def test_completed_task_is_neither_recreated_nor_changed(collection: Any) -> Non
     report = sync(both(collection), LAZUR, [alert(start=NOW + 5 * H)], NOW)
     assert [t.component.decoded("DUE") for t in tasks(collection)] == [NOW + 3 * H]
     assert all("secure" not in s for s in report.created + report.updated)
+
+
+OSLO = ZoneInfo("Europe/Oslo")
+
+
+@pytest.mark.parametrize(
+    ("start", "moved", "tzid"),
+    [
+        (NOW + 1 * H, NOW + 3 * H, None),
+        ((NOW + 1 * H).astimezone(OSLO), NOW + 3 * H, "Europe/Oslo"),  # keeps its TZID
+        # across the start of summer time: 01:30 CET, two hours on, is 04:30 CEST
+        (datetime(2026, 3, 29, 1, 30, tzinfo=OSLO), datetime(2026, 3, 29, 4, 30, tzinfo=OSLO), "Europe/Oslo"),
+        (datetime(2026, 11, 13, 13), datetime(2026, 11, 13, 15), None),  # floating stays floating
+        (date(2026, 11, 13), date(2026, 11, 13), None),  # a date is left alone
+    ],
+)
+def test_dtstart_moves_along_with_the_deadline(collection: Any, start: date, moved: date, tzid: str | None) -> None:
+    sync(both(collection), LAZUR, [alert()], NOW)
+    [task] = tasks(collection)
+    task.component.add("DTSTART", start)  # the user, or plann, planned when to start
+    task.save()
+    sync(both(collection), LAZUR, [alert(start=NOW + 8 * H)], NOW)
+    [task] = tasks(collection)
+    assert task.component.decoded("DUE") == NOW + 5 * H
+    assert task.component.decoded("DTSTART") == moved  # a floating one only equals a floating one
+    assert task.component["DTSTART"].params.get("TZID") == tzid
+    report = sync(both(collection), LAZUR, [alert(start=NOW + 8 * H)], NOW)
+    assert report.updated == []
+
+
+def test_dtstart_stays_when_the_user_moved_the_deadline(collection: Any) -> None:
+    sync(both(collection), LAZUR, [alert()], NOW)
+    [task] = tasks(collection)
+    task.component.DUE = NOW + 1 * H
+    task.component.add("DTSTART", NOW)
+    task.save()
+    sync(both(collection), LAZUR, [alert(start=NOW + 8 * H)], NOW)
+    [task] = tasks(collection)
+    assert task.component.decoded("DTSTART") == NOW
 
 
 def test_deadline_moved_by_the_user_is_kept(collection: Any) -> None:

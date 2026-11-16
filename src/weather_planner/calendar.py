@@ -24,7 +24,7 @@ import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
@@ -217,6 +217,15 @@ def _set(item: SyncItem, a: Alert, place: Place) -> bool:
         # A deadline the user has moved is theirs to keep.
         if not _moved_by_user(c):
             if c.decoded("DUE") != a.task_due:
+                # A DTSTART (set by the user, or plann) moves by as much, keeping its
+                # TZID, or staying floating; a date-only one is left alone.
+                start = c.decoded("DTSTART", None)
+                if isinstance(start, datetime):
+                    shift = a.task_due - c.decoded("DUE")
+                    if start.tzinfo is None:
+                        c.DTSTART = start + shift
+                    else:  # in UTC, or a shift across a DST change is an hour off
+                        c.DTSTART = (start.astimezone(timezone.utc) + shift).astimezone(start.tzinfo)
                 c.DUE = a.task_due
                 changed = True
             changed |= _put(c, DUE, a.task_due.isoformat())

@@ -97,8 +97,11 @@ hours, and an overdue "prepare for …" task would never look overdue.
   when they differ. Events are `TRANSPARENT` (free time): a weather alert is
   information, not a commitment that should block the user's free/busy.
 * **Matched open tasks** get summary, description and span rewritten, and the
-  deadline only while the user has not moved it. Priority and other fields
-  are never set by the tool, so they are never overwritten.
+  deadline only while the user has not moved it. A `DTSTART` set on the
+  task (by the user or a planner like plann) moves along with the deadline,
+  keeping its distance to it and its time zone; a date-only one is left
+  alone. Priority and other fields are never set by the tool, so they are
+  never overwritten.
 * **Closed tasks** (`STATUS:COMPLETED`/`CANCELLED`, a `COMPLETED` property, or
   `PERCENT-COMPLETE:100`) are never touched. They hold back a new task only
   while they overlap the alert.

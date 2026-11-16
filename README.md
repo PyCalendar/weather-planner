@@ -184,8 +184,9 @@ place's name, `GEO` its position, and a `GEO` more than 5 km off is another
 place), was written for the same alert name and overlaps in time; it is updated in place. Items for alerts that are gone
 are deleted, if they lie wholly in the future and, for tasks, are still
 open. Completed and cancelled tasks are never touched, and a deadline that
-was moved after weather-planner set it is kept. An alert that has begun
-keeps its start, and its task its deadline.
+was moved after weather-planner set it is kept. When weather-planner
+moves a deadline, a task's `DTSTART` (if any) moves along with it. An
+alert that has begun keeps its start, and its task its deadline.
 
 A closed task only holds back a new one while it overlaps the alert, and an
 event deleted by hand comes back on the next run while the alert lasts.
