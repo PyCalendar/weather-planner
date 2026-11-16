@@ -78,3 +78,4 @@ files = ["src", "tests"]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 filterwarnings = ["error"]
+addopts = "-p no:asyncio"
