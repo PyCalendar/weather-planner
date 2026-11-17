@@ -42,7 +42,7 @@ belongs to a new alert when:
 
 * it is at the same place: `LOCATION` is the place's name, and `GEO`, if
   present, is within 5 km of the place's position,
-* its key (`X-WEATHER-PLANNER`, below) is the alert's name, and
+* its key (`X-PYCAL-WEATHER-PLANNER`, below) is the alert's name, and
 * its stored span overlaps the alert's span.
 
 Each existing item is matched at most once. When a match is found, the item is
@@ -51,13 +51,16 @@ updated in place and keeps its UID.
 ## The X-properties
 
 iCalendar allows private `X-` properties, and CalDAV servers are required to
-store them. weather-planner uses three (the place is in `LOCATION` and `GEO`):
+store them. They are named in the vendor style RFC 5545 suggests, with
+`X-PYCAL-` for the pycalendar family of packages that weather-planner is an
+example application of (a registry of the `X-PYCAL-` properties is
+planned). weather-planner uses three (the place is in `LOCATION` and `GEO`):
 
 | property | value | why it is needed |
 |---|---|---|
-| `X-WEATHER-PLANNER` | `<alert>` | The rule the item was written for. Together with the category it marks an item as weather-planner's. The category alone cannot do that: it is a user-visible label the user may also put on their own items (the author's project category is literally `weather-planner`). The place is not part of the key; it is the standard `LOCATION` (the place's name) and `GEO` (its position), which the calendar clients show and understand. Earlier versions wrote `<place>/<alert>` here and no `LOCATION`/`GEO`; such items are still found, and rewritten in the new form on the next run. |
-| `X-WEATHER-PLANNER-START`, `-END` | the alert's span, ISO 8601 UTC | Overlap matching needs the span. A task has no span of its own, only a deadline (`DUE` = start − lead), and once the user moves the deadline even the start cannot be worked out from it. An event's `DTSTART`/`DTEND` may be edited by the user, and the start is held fixed once the alert has begun (below), so they are not a reliable record either. Storing the span explicitly gives tasks and events the same matching rule. |
-| `X-WEATHER-PLANNER-DUE` | the deadline weather-planner last wrote | Tells a deadline the user (or a planner like plann) moved apart from one weather-planner set. If `DUE` still equals this instant, the tool may move it along with the alert. If not, it has been moved by someone else and is left alone. It is compared as an instant, not as a string, because clients re-serialise `DUE` in local time with a `TZID`. |
+| `X-PYCAL-WEATHER-PLANNER` | `<alert>` | The rule the item was written for. Together with the category it marks an item as weather-planner's. The category alone cannot do that: it is a user-visible label the user may also put on their own items (the author's project category is literally `weather-planner`). The place is not part of the key; it is the standard `LOCATION` (the place's name) and `GEO` (its position), which the calendar clients show and understand. |
+| `X-PYCAL-WEATHER-PLANNER-START`, `-END` | the alert's span, ISO 8601 UTC | Overlap matching needs the span. A task has no span of its own, only a deadline (`DUE` = start − lead), and once the user moves the deadline even the start cannot be worked out from it. An event's `DTSTART`/`DTEND` may be edited by the user, and the start is held fixed once the alert has begun (below), so they are not a reliable record either. Storing the span explicitly gives tasks and events the same matching rule. |
+| `X-PYCAL-WEATHER-PLANNER-DUE` | the deadline weather-planner last wrote | Tells a deadline the user (or a planner like plann) moved apart from one weather-planner set. If `DUE` still equals this instant, the tool may move it along with the alert. If not, it has been moved by someone else and is left alone. It is compared as an instant, not as a string, because clients re-serialise `DUE` in local time with a `TZID`. |
 
 **Risk:** editing `LOCATION` (or moving `GEO` far away) detaches an item from
 its place. It is then no longer ours: it is neither updated nor deleted, and

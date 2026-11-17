@@ -126,7 +126,7 @@ def test_defaults_without_alerts(tmp_path: Path) -> None:
         ("{gust: 20, task: {priority: 3}}", "summary"),
         ("{gust: 20, task: {summary: x, due: 2026-11-17}}", "DUE"),
         ("{gust: 20, event: {categories: x}}", "CATEGORIES"),
-        ("{gust: 20, task: {summary: x, x-weather-planner-due: y}}", "X-WEATHER-PLANNER-DUE"),
+        ("{gust: 20, task: {summary: x, x-pycal-weather-planner-due: y}}", "X-PYCAL-WEATHER-PLANNER-DUE"),
         ("{gust: 20, task: {summary: x, priority: [1, 2]}}", "PRIORITY"),
         ("{gust: 20, task: {summary: x, priority: high}}", "PRIORITY"),
         ("{gust: 20, task: {summary: x, end: y}}", "END"),

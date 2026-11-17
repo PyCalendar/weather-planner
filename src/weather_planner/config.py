@@ -39,7 +39,7 @@ WIND_CONDITIONS = ("effective_gust", "gust", "wind")
 # Conditions a direction applies to; an alert reports the direction of the first one it has
 DIRECTIONAL = (*WIND_CONDITIONS, "waves")
 # weather-planner's private X-properties all start with this.
-OWN_PREFIX = "X-WEATHER-PLANNER"
+OWN_PREFIX = "X-PYCAL-WEATHER-PLANNER"
 # Properties weather-planner (or the calendar client or server) writes or relies on itself,
 # and the component delimiters; the configuration may not set them.
 MANAGED_PROPERTIES = {
@@ -192,7 +192,7 @@ class Config:
 
 
 def _check_name(what: str, name: Any) -> None:
-    # Earlier versions keyed calendar items "<place>/<alert>"; keeping "/" out of the names keeps those readable.
+    # Names go into the UIDs of calendar items, which some servers use as file names.
     if not isinstance(name, str) or not name or "/" in name:
         raise ValueError(f"{what} name {name!r} must be a non-empty text without '/'")
 

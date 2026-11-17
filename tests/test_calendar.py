@@ -243,7 +243,7 @@ def test_items_carry_the_places_name_and_position(collection: Any) -> None:
         c = item.component
         assert str(c["LOCATION"]) == "lazur"
         assert c.decoded("GEO") == LAZUR.position
-        assert str(c["X-WEATHER-PLANNER"]) == "gale"  # the rule only; the place is the LOCATION
+        assert str(c["X-PYCAL-WEATHER-PLANNER"]) == "gale"  # the rule only; the place is the LOCATION
 
 
 def test_a_place_with_the_same_name_far_away_is_another_place(collection: Any) -> None:
@@ -261,21 +261,6 @@ def test_a_position_a_little_off_is_still_the_place(collection: Any) -> None:
     assert report.created == []
     assert len(report.updated) == 2  # GEO follows the configured position
     assert len(events(collection)) == 1
-
-
-def test_items_written_with_the_place_in_the_key_are_found_and_migrated(collection: Any) -> None:
-    sync(both(collection), LAZUR, [alert()], NOW)
-    for item in (*events(collection), *tasks(collection)):  # make them look like the old format
-        c = item.component
-        for name in ("LOCATION", "GEO"):
-            c.pop(name)
-        c["X-WEATHER-PLANNER"] = "lazur/gale"
-        item.save()
-    report = sync(both(collection), LAZUR, [alert()], NOW)
-    assert report.created == []
-    assert len(report.updated) == 2
-    assert all(str(i.component["X-WEATHER-PLANNER"]) == "gale" for i in events(collection))
-    assert sync(both(collection), LAZUR, [alert()], NOW).updated == []
 
 
 def test_hourly_runs_during_an_alert_keep_its_start_and_deadline(collection: Any) -> None:
@@ -342,28 +327,3 @@ def test_an_item_with_the_location_but_no_geo_is_at_the_place(collection: Any) -
     report = sync(both(collection), LAZUR, [alert()], NOW)
     assert report.created == []
     assert len(report.updated) == 2
-
-
-def test_old_format_items_of_another_place_are_left_alone(collection: Any) -> None:
-    sync(both(collection), GALATA, [alert()], NOW)
-    for item in (*events(collection), *tasks(collection)):
-        for name in ("LOCATION", "GEO"):
-            item.component.pop(name)
-        item.component["X-WEATHER-PLANNER"] = "galata/gale"
-        item.save()
-    report = sync(both(collection), LAZUR, [], NOW)
-    assert report.deleted == []
-    assert all(str(i.component["X-WEATHER-PLANNER"]) == "galata/gale" for i in events(collection))
-
-
-def test_a_closed_task_in_the_old_format_is_still_found(collection: Any) -> None:
-    sync(both(collection), LAZUR, [alert()], NOW)
-    [task] = tasks(collection)
-    for name in ("LOCATION", "GEO"):
-        task.component.pop(name)
-    task.component["X-WEATHER-PLANNER"] = "lazur/gale"
-    task.save()
-    task.complete()
-    report = sync(both(collection), LAZUR, [alert()], NOW)
-    assert not any("secure" in s for s in report.created)  # not recreated: it is still the alert's task
-    assert len(tasks(collection)) == 1

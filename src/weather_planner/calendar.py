@@ -9,7 +9,7 @@ that are gone are deleted, as long as they lie wholly in the future and, for
 a task, it is still open.
 
 The user, or the calendar system, may move a task's deadline: the deadline
-weather-planner last wrote is kept in ``X-WEATHER-PLANNER-DUE``, and a task
+weather-planner last wrote is kept in ``X-PYCAL-WEATHER-PLANNER-DUE``, and a task
 whose ``DUE`` no longer matches it keeps its deadline.  Completed or
 cancelled tasks are never touched.
 
@@ -40,7 +40,7 @@ from .places import Place, distance_km
 CATEGORY = "weather-planner"
 
 # Private iCalendar properties, stored on each item so the next run can find it again.
-KEY = OWN_PREFIX  # the alert's name (earlier versions wrote "<place>/<alert name>")
+KEY = OWN_PREFIX  # the alert's name
 START = f"{OWN_PREFIX}-START"  # the alert's span; also set on tasks, which have no DTSTART
 END = f"{OWN_PREFIX}-END"
 DUE = f"{OWN_PREFIX}-DUE"  # the deadline last written (tasks only)
@@ -116,7 +116,7 @@ def open_calendars(section: str | None = None, path: str | Path | None = None) -
 
 def _rule(c: icalendar.Component) -> str:
     """The name of the alert rule the item was written for."""
-    return str(c.get(KEY, "")).rpartition("/")[2]  # the part after the place, in the old "<place>/<rule>" keys
+    return str(c.get(KEY, ""))
 
 
 def _geo(c: icalendar.Component) -> tuple[float, float] | None:
@@ -126,9 +126,6 @@ def _geo(c: icalendar.Component) -> tuple[float, float] | None:
 
 def _at_place(c: icalendar.Component, place: Place) -> bool:
     """Whether the item was written for *place*: same LOCATION, and a GEO (if any) not far off."""
-    legacy_key = str(c.get(KEY, ""))
-    if "/" in legacy_key:  # older versions wrote no LOCATION or GEO, only "<place>/<rule>"
-        return legacy_key.startswith(f"{place.name}/")
     if str(c.get("LOCATION", "")) != place.name:
         return False
     geo = _geo(c)
