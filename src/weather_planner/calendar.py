@@ -28,6 +28,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
+import icalendar
 from calendaring import Component, SyncItem, SyncTask, Workspace
 from icalendar_searcher import Searcher
 
@@ -57,7 +58,14 @@ TODO = "todo"
 
 @dataclass
 class Report:
-    """Summaries of the items written, prefixed with "event: " or "task: "."""
+    """What a sync changed in the calendars, for the user to see.
+
+    Each entry is an item's summary, prefixed with "event: " or "task: ".
+    The ``alerts --write`` command prints them, one line per item (to
+    stderr with ``--json``, so as not to spoil the JSON); under the
+    systemd timer they end up in the journal.  Items left as they were
+    are not mentioned.
+    """
 
     created: list[str] = field(default_factory=list)
     updated: list[str] = field(default_factory=list)
@@ -105,17 +113,17 @@ def open_calendars(section: str | None = None, path: str | Path | None = None) -
 # --- Reading what is already in the calendar -------------------------------
 
 
-def _rule(c: Any) -> str:
+def _rule(c: icalendar.Component) -> str:
     """The name of the alert rule the item was written for."""
     return str(c.get(KEY, "")).rpartition("/")[2]  # the part after the place, in the old "<place>/<rule>" keys
 
 
-def _geo(c: Any) -> tuple[float, float] | None:
+def _geo(c: icalendar.Component) -> tuple[float, float] | None:
     """The item's GEO, or None when it has none (calendaring refuses a malformed one when reading)."""
     return c.decoded("GEO") if "GEO" in c else None
 
 
-def _at_place(c: Any, place: Place) -> bool:
+def _at_place(c: icalendar.Component, place: Place) -> bool:
     """Whether the item was written for *place*: same LOCATION, and a GEO (if any) not far off."""
     legacy_key = str(c.get(KEY, ""))
     if "/" in legacy_key:  # older versions wrote no LOCATION or GEO, only "<place>/<rule>"
@@ -156,8 +164,9 @@ def _closed(item: SyncItem) -> bool:
     return str(c.get("STATUS", "")) in CLOSED or "COMPLETED" in c or str(c.get("PERCENT-COMPLETE", "")) == "100"
 
 
-def _moved_by_user(c: Any) -> bool:
+def _moved_by_user(task: SyncTask) -> bool:
     """Whether the task's DUE is no longer the one weather-planner last wrote (compared as instants)."""
+    c = task.component
     if DUE not in c or "DUE" not in c:
         # Nothing to compare: a task with neither is new, one with only one of them has been tampered with.
         return DUE in c or "DUE" in c
@@ -174,7 +183,7 @@ def _description(a: Alert) -> str:
     return f"{a.describe(a.wind_unit)}\n{a.start:%a %d %H:%M} - {a.end:%a %d %H:%M} UTC"
 
 
-def _put(c: Any, name: str, value: str) -> bool:
+def _put(c: icalendar.Component, name: str, value: str) -> bool:
     """Set property *name* to *value* unless it already is; whether it changed."""
     if str(c.get(name, "")) == value:
         return False
@@ -215,7 +224,7 @@ def _set(item: SyncItem, a: Alert, place: Place) -> bool:
         assert a.task_due is not None
         changed |= _put(c, "SUMMARY", a.task)
         # A deadline the user has moved is theirs to keep.
-        if not _moved_by_user(c):
+        if not _moved_by_user(item):
             if c.decoded("DUE") != a.task_due:
                 # A DTSTART (set by the user, or plann) moves by as much, keeping its
                 # TZID, or staying floating; a date-only one is left alone.
@@ -322,9 +331,14 @@ def _searched(calendars: Calendars, target: Any, component: Component) -> list[A
 
 
 def sync(calendars: Calendars, place: Place, alerts: list[Alert], now: datetime) -> Report:
-    """Make the calendars hold the events and tasks *alerts* give for *place*, and no other ones of ours.
+    """Bring weather-planner's events and tasks for *place* in line with *alerts*, the latest forecast.
 
-    An alert gives an event if it has a ``summary`` and a task if it has a ``task``.
+    Each alert should have an event (when its rule gives one a ``summary``)
+    and a task (when its rule has a ``task``).  Items written on earlier runs
+    are updated to match; missing ones are created; ours that no alert
+    accounts for any more are deleted, within the limits described in the
+    module docstring.  Items for other places, and items weather-planner did
+    not write, are left alone.
     """
     report = Report()
     events, tasks = calendars.events, calendars.tasks
