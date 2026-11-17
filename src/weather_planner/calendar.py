@@ -33,16 +33,17 @@ from calendaring import Component, SyncItem, SyncTask, Workspace
 from icalendar_searcher import Searcher
 
 from .alerts import Alert
+from .config import OWN_PREFIX
 from .places import Place, distance_km
 
 # Marks every item we write, so that we only ever search for (and delete) our own.
 CATEGORY = "weather-planner"
 
 # Private iCalendar properties, stored on each item so the next run can find it again.
-KEY = "X-WEATHER-PLANNER"  # the alert's name (earlier versions wrote "<place>/<alert name>")
-START = "X-WEATHER-PLANNER-START"  # the alert's span; also set on tasks, which have no DTSTART
-END = "X-WEATHER-PLANNER-END"
-DUE = "X-WEATHER-PLANNER-DUE"  # the deadline last written (tasks only)
+KEY = OWN_PREFIX  # the alert's name (earlier versions wrote "<place>/<alert name>")
+START = f"{OWN_PREFIX}-START"  # the alert's span; also set on tasks, which have no DTSTART
+END = f"{OWN_PREFIX}-END"
+DUE = f"{OWN_PREFIX}-DUE"  # the deadline last written (tasks only)
 
 # An item whose GEO is further than this from the place's position is not at that place.
 PLACE_TOLERANCE_KM = 5.0
@@ -276,6 +277,9 @@ def _create(collection: Any, place: Place, a: Alert, kind: str) -> SyncItem:
         item = collection.add_event(
             uid=_uid(place, a), summary=a.summary, start=a.start, end=a.end, categories=[CATEGORY]
         )
+    # The configured properties are written once only: a priority (say) the user changes later is theirs.
+    for name, value in (a.rule.task_properties if kind == TODO else a.rule.event_properties).items():
+        item.component.add(name, value)
     _set(item, a, place)  # fills in the rest
     item.save()
     return cast(SyncItem, item)

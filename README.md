@@ -133,7 +133,8 @@ with `probability`, default 0.5), `temperature_below`, `temperature_above`
 marine forecast at the place's `forecast_point`). Thresholds are inclusive.
 
 Settings: `window` (1h-24h, default 3h), `horizon` (up to 16d), `lead`,
-`event` (true by default, false, or a summary), `task` (a summary; no task
+`event` (true by default, false, a summary, or a mapping of properties),
+`task` (a summary, or a mapping of properties with a `summary`; no task
 without it), `worst`, and `direction`: a sector such as `135-225` or
 `315-45`, clockwise and inclusive, outside which wind (for `wind`,
 `gust` and `effective_gust`) and waves (for `waves`, by the wave
@@ -152,6 +153,24 @@ alerts:
     direction: 45-135
     task: double the mooring lines
     lead: 6h
+```
+
+Given as a mapping, `event` and `task` set other iCalendar properties of
+the items as well, such as `priority` or `class`. They are written when
+the item is created and not touched afterwards, so a priority changed in
+the calendar is kept (and a changed configuration reaches new items only).
+The properties weather-planner manages itself (`dtstart`, `due`,
+`categories` and the like) cannot be set. YAML anchors save repeating them:
+
+```yaml
+alerts:
+  strong-wind:
+    effective_gust: 25 kn
+    task: &task {summary: prepare for strong winds, priority: 3}
+  rain:
+    rain: 1 mm
+    task: {<<: *task, summary: take in the laundry}
+    event: {summary: rain, class: PRIVATE}   # an event mapping without a summary gets the generated one
 ```
 
 The forecast models disagree. Each condition looks at the `worst`-th worst
@@ -206,8 +225,6 @@ Not handled here, on purpose:
 * **Cancelled tasks and events,** e.g. the user cancelling a task because the
   forecast wasn't that bad, followed by a forecast that got worse. Left for
   a later release, if ever.
-* Calendar fields other than the summary; they will become configurable
-  later.
 
 ## Licence
 

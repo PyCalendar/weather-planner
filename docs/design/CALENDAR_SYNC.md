@@ -100,8 +100,10 @@ hours, and an overdue "prepare for …" task would never look overdue.
   deadline only while the user has not moved it. A `DTSTART` set on the
   task (by the user or a planner like plann) moves along with the deadline,
   keeping its distance to it and its time zone; a date-only one is left
-  alone. Priority and other fields are never set by the tool, so they are
-  never overwritten.
+  alone. Priority and other properties configured for the task are set when
+  it is created only, so a priority the user (or plann) changes is never
+  overwritten; the same goes for an event's configured properties. The
+  price: a changed configuration reaches new items only.
 * **Closed tasks** (`STATUS:COMPLETED`/`CANCELLED`, a `COMPLETED` property, or
   `PERCENT-COMPLETE:100`) are never touched. They hold back a new task only
   while they overlap the alert.

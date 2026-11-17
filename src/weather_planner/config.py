@@ -13,6 +13,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
+import icalendar
 import yaml
 
 from .places import Place, Sector, parse_place
@@ -37,6 +38,15 @@ _SETTINGS = {"probability", "worst", "window", "horizon", "lead", "event", "task
 WIND_CONDITIONS = ("effective_gust", "gust", "wind")
 # Conditions a direction applies to; an alert reports the direction of the first one it has
 DIRECTIONAL = (*WIND_CONDITIONS, "waves")
+# weather-planner's private X-properties all start with this.
+OWN_PREFIX = "X-WEATHER-PLANNER"
+# Properties weather-planner (or the calendar client or server) writes or relies on itself,
+# and the component delimiters; the configuration may not set them.
+MANAGED_PROPERTIES = {
+    "BEGIN", "END", "UID", "DTSTAMP", "SEQUENCE", "CREATED", "LAST-MODIFIED", "SUMMARY", "DESCRIPTION", "LOCATION", "GEO", "CATEGORIES", "DTSTART", "DTEND",
+    "DUE", "DURATION", "TRANSP", "STATUS", "COMPLETED", "PERCENT-COMPLETE", "RRULE", "RDATE", "EXDATE",
+    "RECURRENCE-ID",
+}  # fmt: skip
 _TOP_LEVEL = {"config_section", "default_place", "places", "units", "horizon", "alerts"}
 
 
@@ -62,6 +72,9 @@ class AlertRule:
     lead: timedelta = timedelta(0)  # the task is due this long before the alert starts
     event: bool | str = True  # a string is the event's summary
     task: str | None = None  # the task's summary; None for no task
+    # Other iCalendar properties to give new events and tasks, by upper-case name.
+    event_properties: dict[str, Any] = field(default_factory=dict)
+    task_properties: dict[str, Any] = field(default_factory=dict)
     direction: Sector | None = None  # only wind (and waves) from here count
 
 
@@ -116,16 +129,47 @@ def parse_alert(name: str, data: Any, horizon: timedelta = DEFAULT_HORIZON) -> A
     if not timedelta(0) < rule.horizon <= MAX_HORIZON:
         raise ValueError(f"alert {name}: horizon must be above 0 and at most {MAX_HORIZON.days}d")
     event = data.get("event", True)
+    if isinstance(event, dict):
+        rule.event_properties = _properties(name, "event", icalendar.Event, event)
+        event = event.get("summary", True)
+        if event is False:
+            raise ValueError(f"alert {name}: event: a summary of false would drop the event and its properties")
     if not isinstance(event, (str, bool)) or event == "":
-        raise ValueError(f"alert {name}: event must be a summary text or true/false")
+        raise ValueError(f"alert {name}: event must be a summary text, true/false or a mapping of properties")
     task = data.get("task")
+    if isinstance(task, dict):
+        rule.task_properties = _properties(name, "task", icalendar.Todo, task)
+        task = task.get("summary")
+        if task is None:
+            raise ValueError(f"alert {name}: task needs a summary")
     if task is not None and (not isinstance(task, str) or task == ""):
-        raise ValueError(f"alert {name}: task must be a summary text")
+        raise ValueError(f"alert {name}: task must be a summary text or a mapping of properties with a summary")
     rule.event = event
     rule.task = task
     if not rule.event and rule.task is None:
         raise ValueError(f"alert {name}: neither an event nor a task; it would never show up")
     return rule
+
+
+def _properties(name: str, what: str, kind: type[icalendar.Component], data: dict[Any, Any]) -> dict[str, Any]:
+    """The iCalendar properties in *data* other than ``summary``, checked by giving them to a *kind* component."""
+    properties = {}
+    for key, value in data.items():
+        prop = str(key).upper()
+        if prop == "SUMMARY":
+            continue
+        if prop in MANAGED_PROPERTIES or prop.startswith(OWN_PREFIX):
+            raise ValueError(f"alert {name}: {what}: {prop} is set by weather-planner itself")
+        if isinstance(value, (list, dict, bool)) or value is None:  # YAML's yes/no would pass as 1/0
+            raise ValueError(f"alert {name}: {what}: {prop} must be a single value, not a list or yes/no")
+        if prop == "PRIORITY" and not (isinstance(value, int) and 0 <= value <= 9):
+            raise ValueError(f"alert {name}: {what}: PRIORITY must be a whole number 0-9")
+        try:
+            kind().add(prop, value)
+        except (ValueError, TypeError) as e:
+            raise ValueError(f"alert {name}: {what}: {prop}: {e}") from None
+        properties[prop] = value
+    return properties
 
 
 @dataclass

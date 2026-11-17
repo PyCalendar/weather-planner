@@ -100,6 +100,43 @@ def test_completed_task_is_neither_recreated_nor_changed(collection: Any) -> Non
     assert all("secure" not in s for s in report.created + report.updated)
 
 
+def test_configured_properties_are_set_when_created(collection: Any) -> None:
+    sync(
+        both(collection),
+        LAZUR,
+        [alert(task={"summary": "secure the deck", "priority": 3}, event={"class": "PRIVATE"})],
+        NOW,
+    )
+    [task] = tasks(collection)
+    assert task.component.decoded("PRIORITY") == 3
+    [event] = events(collection)
+    assert str(event.component["CLASS"]) == "PRIVATE"
+
+
+def test_configured_properties_survive_an_update(collection: Any) -> None:
+    sync(both(collection), LAZUR, [alert(task={"summary": "secure the deck", "priority": 3})], NOW)
+    report = sync(
+        both(collection), LAZUR, [alert(start=NOW + 7 * H, task={"summary": "secure the deck", "priority": 3})], NOW
+    )
+    assert report.created == []
+    [task] = tasks(collection)
+    assert task.component.decoded("DUE") == NOW + 4 * H
+    assert task.component.decoded("PRIORITY") == 3
+
+
+def test_a_priority_changed_by_the_user_is_kept(collection: Any) -> None:
+    configured = alert(task={"summary": "secure the deck", "priority": 3})
+    sync(both(collection), LAZUR, [configured], NOW)
+    [task] = tasks(collection)
+    task.component.pop("PRIORITY")
+    task.component.add("PRIORITY", 1)
+    task.save()
+    sync(both(collection), LAZUR, [alert(start=NOW + 7 * H, task={"summary": "secure the deck", "priority": 3})], NOW)
+    [task] = tasks(collection)
+    assert task.component.decoded("DUE") == NOW + 4 * H  # it was updated, but
+    assert task.component.decoded("PRIORITY") == 1  # not its priority
+
+
 OSLO = ZoneInfo("Europe/Oslo")
 
 

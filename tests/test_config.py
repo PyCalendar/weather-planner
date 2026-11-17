@@ -123,6 +123,20 @@ def test_defaults_without_alerts(tmp_path: Path) -> None:
         ("[gust]", "mapping"),
         ("{rain: 1, direction: 135-225}", "direction"),
         ("{wind: 5, direction: south}", "sector"),
+        ("{gust: 20, task: {priority: 3}}", "summary"),
+        ("{gust: 20, task: {summary: x, due: 2026-11-17}}", "DUE"),
+        ("{gust: 20, event: {categories: x}}", "CATEGORIES"),
+        ("{gust: 20, task: {summary: x, x-weather-planner-due: y}}", "X-WEATHER-PLANNER-DUE"),
+        ("{gust: 20, task: {summary: x, priority: [1, 2]}}", "PRIORITY"),
+        ("{gust: 20, task: {summary: x, priority: high}}", "PRIORITY"),
+        ("{gust: 20, task: {summary: x, end: y}}", "END"),
+        ("{gust: 20, task: {summary: x, begin: y}}", "BEGIN"),
+        ("{gust: 20, task: {summary: x, sequence: 2}}", "SEQUENCE"),
+        ("{gust: 20, task: {summary: x, last-modified: 2026-01-01}}", "LAST-MODIFIED"),
+        ("{gust: 20, task: {summary: x, created: 2026-01-01}}", "CREATED"),
+        ("{gust: 20, task: {summary: x, priority: yes}}", "PRIORITY"),
+        ("{gust: 20, task: {summary: x, priority: 10}}", "PRIORITY"),
+        ("{gust: 20, task: x, event: {summary: false, class: PRIVATE}}", "event"),
     ],
 )
 def test_bad_alert_rejected(tmp_path: Path, alert: str, message: str) -> None:
@@ -174,3 +188,17 @@ def test_malformed_config_rejected(tmp_path: Path, text: str, message: str) -> N
     f.write_text(text)
     with pytest.raises(ValueError, match=message):
         load_config(f)
+
+
+def test_task_and_event_may_set_other_properties(tmp_path: Path) -> None:
+    f = tmp_path / "c.yaml"
+    f.write_text(
+        "alerts:\n"
+        "  a: {gust: 20, task: {summary: secure the deck, priority: 3}, event: {class: PRIVATE}}\n"
+        "  b: {gust: 20, task: secure the deck, event: {summary: windy, priority: 5}}\n"
+    )
+    a, b = load_config(f).alerts.values()
+    assert (a.task, a.task_properties) == ("secure the deck", {"PRIORITY": 3})
+    assert (a.event, a.event_properties) == (True, {"CLASS": "PRIVATE"})
+    assert (b.task, b.task_properties) == ("secure the deck", {})
+    assert (b.event, b.event_properties) == ("windy", {"PRIORITY": 5})
